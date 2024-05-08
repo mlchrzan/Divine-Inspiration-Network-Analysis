@@ -43,3 +43,29 @@ multiple |>
   ungroup() |> 
   arrange(desc(n))
 ```
+
+```{r relationships-wide, warning=FALSE}
+relates |> 
+  select(person_id_1, person_id_2, relationship_type) |> 
+  pivot_wider(names_from = relationship_type, 
+              values_from = relationship_type) |> 
+  unnest() |> 
+  mutate(across(!starts_with("person_id"), ~if_else(!is.na(.), 1, 0)), 
+         n_relates = rowSums(across(where(is.numeric)), na.rm = TRUE)) |> 
+  select(person_id_1, person_id_2, n_relates, everything())
+```
+
+```{r family-identification}
+family_types 
+c('son', 
+  'father', 
+  'mother', 
+  'daughter', 
+  'brother', 
+  'sister', 
+  )
+
+relates |> 
+  select(relationship_type) |> 
+  filter()
+```
