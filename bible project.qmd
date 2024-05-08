@@ -1,6 +1,6 @@
 ---
 title: "bible project"
-author: "kr and mlc"
+author: "kmr and mlc"
 format: html
 editor: visual
 ---
@@ -10,15 +10,24 @@ library(tidyverse)
 ```
 
 ```{r load-data}
-relates <- read_csv('relationship.csv')
+relation <- read_csv('relationship.csv')
+label <- read_csv('label.csv')
+person <- read_csv('person.csv')
+personverse <- read_csv('personverse.csv')
+book_info <- read_csv('bibledata_book.csv')
+all_verses <- read.csv('alamopolyglot.csv')
 ```
 
 ```{r}
-head(relates)
+# Get a list of all data frames in the global environment
+all_dfs <- Filter(function(x) is(x, "data.frame"), mget(ls()))
+
+# Apply head() to each data frame
+lapply(dfs, head)
 ```
 
 ```{r most-common}
-relates |> 
+relation |> 
   group_by(relationship_type) |> 
   summarize(count = n()) |> 
   ungroup() |> 
@@ -26,7 +35,7 @@ relates |>
 ```
 
 ```{r multiple-relationships}
-multiple <- relates |> 
+multiple <- relation |> 
   mutate(relationship_type = as_factor(relationship_type)) |> 
   group_by(person_id_1, person_id_2) |> 
   summarize(n = n(), .groups = 'keep') |>
@@ -45,7 +54,7 @@ multiple |>
 ```
 
 ```{r relationships-wide, warning=FALSE}
-relates |> 
+relation |> 
   select(person_id_1, person_id_2, relationship_type) |> 
   pivot_wider(names_from = relationship_type, 
               values_from = relationship_type) |> 
