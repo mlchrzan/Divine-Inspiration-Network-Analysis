@@ -1,0 +1,45 @@
+---
+title: "bible project"
+author: "kr and mlc"
+format: html
+editor: visual
+---
+
+```{r libraries, message=FALSE}
+library(tidyverse)
+```
+
+```{r load-data}
+relates <- read_csv('relationship.csv')
+```
+
+```{r}
+head(relates)
+```
+
+```{r most-common}
+relates |> 
+  group_by(relationship_type) |> 
+  summarize(count = n()) |> 
+  ungroup() |> 
+  arrange(desc(count))
+```
+
+```{r multiple-relationships}
+multiple <- relates |> 
+  mutate(relationship_type = as_factor(relationship_type)) |> 
+  group_by(person_id_1, person_id_2) |> 
+  summarize(n = n(), .groups = 'keep') |>
+  ungroup() |> 
+  filter(n > 1) |> 
+  right_join(relates, by = join_by(person_id_1, person_id_2)) |> 
+  filter(n > 1) |> 
+  select(person_id_1, relationship_type, person_id_2, everything(), -n) 
+
+# Most common
+multiple |> 
+  group_by(relationship_type) |> 
+  summarize(n = n()) |> 
+  ungroup() |> 
+  arrange(desc(n))
+```
