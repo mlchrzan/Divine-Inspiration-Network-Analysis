@@ -23,7 +23,7 @@ all_verses <- read.csv('alamopolyglot.csv')
 all_dfs <- Filter(function(x) is(x, "data.frame"), mget(ls()))
 
 # Apply head() to each data frame
-lapply(dfs, head)
+lapply(all_dfs, head)
 ```
 
 ```{r most-common}
