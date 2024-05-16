@@ -1,0 +1,14 @@
+---
+title: "code_graveyard"
+author: "mlc"
+format: html
+editor: visual
+---
+
+```{r}
+# Get a list of all data frames in the global environment
+all_dfs <- Filter(function(x) is(x, "data.frame"), mget(ls()))
+
+# Apply head() to each data frame
+lapply(all_dfs, head)
+```

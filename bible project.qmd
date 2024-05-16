@@ -7,27 +7,45 @@ editor: visual
 
 ```{r libraries, message=FALSE}
 library(tidyverse)
+library(beepr) 
 ```
 
-```{r load-data}
-relation <- read_csv('relationship.csv')
-label <- read_csv('label.csv')
-person <- read_csv('person.csv')
+```{r load-data, message=FALSE}
+personrelation <- read_csv('relationship.csv')
+# all relational data on people
+# can create a book variable from the reference column
+
+person_info <- read_csv('person.csv')
+## list of all people mentioned in the bible in order
+# gender, name frequency (may be suspect, matches the id differentiator?), tribe
+# shares person_id with personrelation
+
+personlabel <- read_csv('label.csv')
+# labels and label types
+# shares person_label_id with personverse, unclear to Michael what the two numbers represent
+
 personverse <- read_csv('personverse.csv')
+# shares person_label_id with personlabel
+
 book_info <- read_csv('bibledata_book.csv')
-all_verses <- read.csv('alamopolyglot.csv')
+# number of chapters and verses
+
+verses <- read.csv('alamopolyglot.csv')
+# all verses of the Bible
+
+## NOTES
+# Not sure if there's a way to get a single person_id
+# all person ones have a person_id column
 ```
 
-```{r}
-# Get a list of all data frames in the global environment
-all_dfs <- Filter(function(x) is(x, "data.frame"), mget(ls()))
+```{r joining-data}
 
-# Apply head() to each data frame
-lapply(all_dfs, head)
+
+
 ```
 
 ```{r most-common}
-relation |> 
+personrelation |> 
   group_by(relationship_type) |> 
   summarize(count = n()) |> 
   ungroup() |> 
@@ -35,33 +53,38 @@ relation |>
 ```
 
 ```{r multiple-relationships}
-multiple <- relation |> 
+multiple_relations <- personrelation |> 
   mutate(relationship_type = as_factor(relationship_type)) |> 
   group_by(person_id_1, person_id_2) |> 
   summarize(n = n(), .groups = 'keep') |>
   ungroup() |> 
   filter(n > 1) |> 
-  right_join(relates, by = join_by(person_id_1, person_id_2)) |> 
+  right_join(personrelation, by = join_by(person_id_1, person_id_2)) |> 
   filter(n > 1) |> 
   select(person_id_1, relationship_type, person_id_2, everything(), -n) 
 
+multiple_relations
+
 # Most common
-multiple |> 
+multiple_relations |> 
   group_by(relationship_type) |> 
   summarize(n = n()) |> 
   ungroup() |> 
   arrange(desc(n))
+
+# these don't seem too clean 😬
 ```
 
 ```{r relationships-wide, warning=FALSE}
-relation |> 
+personrelation |> 
   select(person_id_1, person_id_2, relationship_type) |> 
   pivot_wider(names_from = relationship_type, 
               values_from = relationship_type) |> 
   unnest() |> 
   mutate(across(!starts_with("person_id"), ~if_else(!is.na(.), 1, 0)), 
          n_relates = rowSums(across(where(is.numeric)), na.rm = TRUE)) |> 
-  select(person_id_1, person_id_2, n_relates, everything()) 
+  select(person_id_1, person_id_2, n_relates, everything()) |> 
+  arrange(desc(n_relates))
 ```
 
 ```{r family-identification}
@@ -74,7 +97,23 @@ c('son',
   'sister', 
   )
 
-relates |> 
+personrelation |> 
   select(relationship_type) |> 
   filter()
+```
+
+```{r explore-book-length}
+book_info |> 
+  ggplot(aes(x = chapter_count)) + geom_histogram() + theme_minimal()
+
+book_info |> 
+  ggplot(aes(x = verse_count)) + geom_histogram() + theme_minimal()
+
+book_info |> 
+  ggplot(aes(x = christian_sequence, 
+             y = chapter_count)) +
+  #geom_line() + 
+  geom_text(aes(label = book_name, 
+                color = verse_count)) + 
+  theme_minimal()
 ```
