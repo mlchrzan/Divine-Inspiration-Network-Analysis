@@ -1,0 +1,151 @@
+---
+title: "topic model network"
+author: "mlc and kr"
+format: html
+editor: visual
+---
+
+```{r libraries, message=FALSE}
+library(tidyverse)
+library(beepr) 
+
+# From lab
+library(NLP)
+library(tm)
+library(SnowballC)
+library(topicmodels) 
+library(ldatuning) 
+```
+
+```{r load-data, message=FALSE}
+verses <- read.csv('bibledata_kr.csv')
+# all verses of the Bible
+```
+
+```{r cleaning}
+count(verses, Section)
+
+verses <- verses |> 
+  mutate(Section = if_else(Section == "Major 'Prophets", "Major Prophets", Section))
+
+count(verses, Section)
+```
+
+```{r aggregate-to-chapters}
+chapters <- verses |> 
+  group_by(book_id, book_name, chapter) |> 
+  summarize(text = paste(king_james_bible_kjv, collapse = " "), .groups = 'drop') |> 
+  full_join(verses |> select(book_id, book_name, chapter, Testament, Section)) |> 
+  distinct()
+
+chapters
+```
+
+```{r filter-to-prophets}
+prophets <- chapters |> 
+  filter(Section == 'Major Prophets' | Section == 'Minor Prophets')
+```
+
+```{r get-corpus}
+prophet_corpus <- Corpus(VectorSource(prophets$text))
+
+length(prophet_corpus)
+```
+
+```{r text-cleaning, warning=FALSE}
+# chapter number to check 
+n <- 2
+
+# Remove capital letters
+prophet_corpus <- tm_map(prophet_corpus, tolower)
+
+prophet_corpus[[n]]$content
+
+# Split words
+gsub_function <- function(x, pattern) gsub(pattern, replacement = " ", x)
+split_words <- content_transformer(gsub_function)
+prophet_corpus <- tm_map(prophet_corpus, split_words, pattern = "/")
+
+prophet_corpus[[n]]$content
+
+# Remove punctuation
+prophet_corpus <- tm_map(prophet_corpus, removePunctuation)
+
+prophet_corpus[[n]]$content
+
+# Remove numbers
+prophet_corpus <- tm_map(prophet_corpus, removeNumbers)
+
+prophet_corpus[[n]]$content
+
+# Remove stopwords
+prophet_corpus <- tm_map(prophet_corpus, removeWords, stopwords("english"))
+
+prophet_corpus[[n]]$content
+
+# myStopwords <- c("dissertation", "chapter", "chapters", "research", 
+#                  "researcher" ,"researchers" ,"study", "studies", 
+#                  "studied", "studys", "studying", "one", "two", "three")
+
+# chapter_corpus <- tm_map(chapter_corpus, removeWords, myStopwords)
+
+# Remove whitespace
+prophet_corpus <- tm_map(prophet_corpus, stripWhitespace)
+
+prophet_corpus[[n]]$content
+
+# Stem words
+prophet_corpus <- tm_map(prophet_corpus, stemDocument)
+
+prophet_corpus[[n]]$content
+```
+
+```{r document-term-matrix}
+prophet_dtm <- DocumentTermMatrix(prophet_corpus)
+
+prophet_dtm
+```
+
+# Topic Modeling
+
+```{r key-LDA-inputs}
+burnin <- 200 # number of omitted Gibbs iterations at beginning
+iter <- 3000 # number of iterations
+thin <- 2000 # number of omitted iterations between each kept iteration 
+seed <- list(2003, 5,63, 100001, 765) #seeds to enable reproducibility
+nstart <- 5 # number of repeated random starts
+best <- TRUE # only continue model on the best model
+k <- 5 # number of topics
+```
+
+```{r FindTopicsNumber, message=F, results='hide', warning=F}
+topic_num_model <- FindTopicsNumber(dtm = prophet_dtm, 
+                             topics = seq(from = 4, to = 40, by = 2), 
+                             metrics = c("CaoJuan2009", "Arun2010"), 
+                             method = "Gibbs", 
+                             control = list(nstart = 1, seed = c(30), 
+                                            best = best, burnin = burnin, 
+                                            iter = iter, thin = thin), 
+                             mc.cores = 2,  verbose = TRUE)
+
+beep(1)
+topic_num_model
+```
+
+```{r plot-fitmodel}
+FindTopicsNumber_plot(topic_num_model) 
+```
+
+```{r build-LDA}
+k <- 40 
+
+ldaOut <- LDA(x = prophet_dtm, k = k, method = "Gibbs", 
+              control = list(nstart = nstart, seed = seed, best = best,
+                             burnin = burnin, iter = iter, thin = thin))
+
+beep(1)
+```
+
+```{r}
+terms(ldaOut, 10)
+```

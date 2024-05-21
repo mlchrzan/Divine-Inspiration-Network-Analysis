@@ -39,7 +39,8 @@ verses <- read.csv('alamopolyglot.csv')
 ```
 
 ```{r joining-data}
-
+left_join(personrelation, person_info |> select(person_id, sex, tribe), 
+          by = join_by(person_id_1 = person_id))
 
 
 ```
@@ -116,4 +117,9 @@ book_info |>
   geom_text(aes(label = book_name, 
                 color = verse_count)) + 
   theme_minimal()
+```
+
+```{r}
+person_info |> 
+  ggplot(aes(x = name_instance)) + geom_histogram()
 ```
