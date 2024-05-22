@@ -8,13 +8,16 @@ editor: visual
 ```{r libraries, message=FALSE}
 library(tidyverse)
 library(beepr) 
+library(igraph)
 
-# From lab
+# From Chapter 12 lab
 library(NLP)
 library(tm)
 library(SnowballC)
 library(topicmodels) 
 library(ldatuning) 
+
+
 ```
 
 ```{r load-data, message=FALSE}
@@ -148,4 +151,77 @@ beep(1)
 
 ```{r}
 terms(ldaOut, 10)
+
+```
+
+# Build Network
+
+```{r convert-to-matrix-object}
+mat_prophets <- as.matrix(prophet_dtm)
+dim(mat_prophets)
+```
+
+```{r get-topics-by-chapter}
+ldaOut_topics <- topics(ldaOut)
+```
+
+```{r filter-most-used-words}
+worduse <- colSums(mat_prophets)
+
+mat_prophets_words_subset <- mat_prophets[, worduse > 5]
+
+dim(mat_prophets_words_subset)
+```
+
+```{r create-network}
+prophet_word_net <- graph_from_biadjacency_matrix(mat_prophets_words_subset,
+                                                  mode = "all", weighted = T)
+
+prophet_word_net
+```
+
+```{r get-type-attr}
+type <- vertex_attr(prophet_word_net, "type") # these are the two modes (word/chapter)
+
+table(type)  
+```
+
+\>\>\> NEED TO GET THE BOOKS
+
+```{r}
+vertex_attr(prophet_word_net, "name")
+```
+
+```{r make-word-nodes-green}
+V(prophet_word_net)$color[type == TRUE] <- rgb(red = 0, green = 1, 
+                                               blue = 0, alpha = .2) 
+```
+
+```{r make-topic-color-blue}
+V(prophet_word_net)$color[type == FALSE] <- rgb(red = 0, green = 0, 
+                                                 blue = 1, alpha = .2)
+```
+
+```{r set-plot-arguments}
+V(prophet_word_net)$label <- V(prophet_word_net)$name
+V(prophet_word_net)$label.color <- rgb(0, 0, .2, .85)
+V(prophet_word_net)$label.cex <- .75
+V(prophet_word_net)$size <- 3
+V(prophet_word_net)$frame.color <- V(prophet_word_net)$color
+```
+
+```{r set-edge-color}
+E(prophet_word_net)$color <- rgb(0.3, 0.3, 0.3, 0.08)
+```
+
+```{r plot, fig.height=9.5, fig.width=9.5}
+set.seed(106)
+plot(prophet_word_net, layout = layout_with_fr)
+```
+
+# adjustments
+
+```{r view-most-common-topics}
+plot(ldaOut_topics)
+hist(ldaOut_topics)
 ```
