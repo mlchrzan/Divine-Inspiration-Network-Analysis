@@ -16,9 +16,9 @@ library(tm)
 library(SnowballC)
 library(topicmodels) 
 library(ldatuning) 
-
-
 ```
+
+# Data Processing
 
 ```{r load-data, message=FALSE}
 verses <- read.csv('bibledata_kr.csv')
@@ -47,6 +47,21 @@ chapters
 ```{r filter-to-prophets}
 prophets <- chapters |> 
   filter(Section == 'Major Prophets' | Section == 'Minor Prophets')
+```
+
+```{r chapters-per-book}
+prophets |> 
+  group_by(book_name) |> 
+  summarize(n_chaps = n_distinct(chapter), .groups = 'drop') |> 
+  ggplot(aes(x = book_name, 
+             y = n_chaps)) + 
+  geom_col(fill = 'blue4') + 
+  geom_text(aes(label = n_chaps), nudge_y = 1) + 
+  theme_minimal() + 
+  labs(# title = 'Number of Chapters (in Biblical Order)',
+       x = 'Number of Chapters', 
+       y = 'Book') + 
+  coord_flip()
 ```
 
 ```{r get-corpus}
@@ -151,18 +166,13 @@ beep(1)
 
 ```{r}
 terms(ldaOut, 10)
-
 ```
 
-# Build Network
+# Build Word Network
 
 ```{r convert-to-matrix-object}
 mat_prophets <- as.matrix(prophet_dtm)
 dim(mat_prophets)
-```
-
-```{r get-topics-by-chapter}
-ldaOut_topics <- topics(ldaOut)
 ```
 
 ```{r filter-most-used-words}
@@ -204,6 +214,7 @@ V(prophet_word_net)$color[type == FALSE] <- rgb(red = 0, green = 0,
 
 ```{r set-plot-arguments}
 V(prophet_word_net)$label <- V(prophet_word_net)$name
+V(prophet_word_net)$label[type == TRUE] <- NA 
 V(prophet_word_net)$label.color <- rgb(0, 0, .2, .85)
 V(prophet_word_net)$label.cex <- .75
 V(prophet_word_net)$size <- 3
@@ -219,9 +230,97 @@ set.seed(106)
 plot(prophet_word_net, layout = layout_with_fr)
 ```
 
-# adjustments
+# Build Book-to-Topic Network
+
+```{r get-topics-by-chapter}
+ldaOut_topics <- topics(ldaOut)
+
+# Add to tibble
+prophets_topics <- prophets |> 
+  mutate(ldaTopic = ldaOut_topics)
+
+prophets_topics
+```
+
+```{r number-of-topics-by-book, message=FALSE, warning=FALSE}
+prophets_topics |> 
+  group_by(book_name) |> 
+  summarize(n_chaps = n_distinct(chapter), 
+            n_topics = n_distinct(ldaTopic), .groups = 'drop') |> 
+  mutate(topics_chap_ratio = n_topics/n_chaps)
+
+prophets_topics |> 
+  group_by(book_name) |> 
+  summarize(n_chaps = n_distinct(chapter), 
+            n_topics = n_distinct(ldaTopic), .groups = 'drop') |> 
+  mutate(topics_chap_ratio = n_topics/n_chaps) |> 
+  ggplot(aes(y = n_topics, x = n_chaps)) + 
+  geom_point() + 
+  geom_smooth(method = 'lm', se = F) + 
+  geom_smooth(method = 'loess', color = 'red', se = F)
+```
 
 ```{r view-most-common-topics}
 plot(ldaOut_topics)
 hist(ldaOut_topics)
+
+ggplot(prophets_topics, aes(x = ldaTopic)) + 
+  geom_histogram(bins = 40) + 
+  theme_minimal() + 
+  labs(title = "Frequency of Topics")
+
+topic_counts <- prophets_topics %>%
+  count(ldaTopic)
+
+ggplot(topic_counts, 
+       aes(x = ldaTopic, 
+           y = n)) + 
+  geom_col(fill = 'blue4') + 
+  geom_text(aes(label = n), 
+            nudge_y = 1.25) +
+  theme_minimal() + 
+  labs(title = "Frequency of Topics",
+       subtitle = 'Label is the number of times the topic occurs across all books',
+       y = 'Frequency of Topic') +
+  theme(legend.position = 'none')+
+  scale_x_continuous(breaks = unique(topic_counts$ldaTopic))
+```
+
+```{r create-biadjacency-matrix}
+row_nodes <- unique(prophet_top_edgelist$book_name)
+col_nodes <- unique(prophet_top_edgelist$ldaTopic)
+
+# Initialize the biadjacency matrix with zeros
+biadj_matrix <- matrix(0, nrow = length(row_nodes), ncol = length(col_nodes),
+                       dimnames = list(row_nodes, col_nodes))
+
+# Populate the biadjacency matrix
+for (i in 1:nrow(prophet_top_edgelist)) {
+  row <- prophet_top_edgelist$book_name[i]
+  col <- prophet_top_edgelist$ldaTopic[i]
+  biadj_matrix[row, col] <- biadj_matrix[row, col] + 1
+}
+
+prophet_topic_net <- graph_from_biadjacency_matrix(incidence= biadj_matrix, 
+                                                   mode = 'all')
+```
+
+```{r}
+type <- vertex_attr(prophet_topic_net, "type") # these are the two modes (word/chapter)
+
+table(type)  
+```
+
+```{r plot, fig.height=9.5, fig.width=9.5}
+# topic color
+V(prophet_topic_net)$color[type == TRUE] <- rgb(red = 0, green = 0.5, 
+                                               blue = 0, alpha = .2) 
+
+# book color
+V(prophet_topic_net)$color[type == FALSE] <- rgb(red = 0, green = 0, 
+                                                 blue = 1, alpha = 0.5)
+
+
+set.seed(106)
+plot(prophet_topic_net, layout = layout_with_fr)
 ```
