@@ -101,12 +101,6 @@ prophet_corpus <- tm_map(prophet_corpus, removeWords, stopwords("english"))
 
 prophet_corpus[[n]]$content
 
-# myStopwords <- c("dissertation", "chapter", "chapters", "research", 
-#                  "researcher" ,"researchers" ,"study", "studies", 
-#                  "studied", "studys", "studying", "one", "two", "three")
-
-# chapter_corpus <- tm_map(chapter_corpus, removeWords, myStopwords)
-
 # Remove whitespace
 prophet_corpus <- tm_map(prophet_corpus, stripWhitespace)
 
@@ -119,6 +113,36 @@ prophet_corpus[[n]]$content
 ```
 
 ```{r document-term-matrix}
+prophet_dtm <- DocumentTermMatrix(prophet_corpus)
+
+prophet_dtm
+```
+
+```{r remove-specific-stopwords}
+mat_prophets <- as.matrix(prophet_dtm)
+worduse <- colSums(mat_prophets)
+words <- colnames(mat_prophets)
+
+tibble(words, worduse) |> 
+  arrange(desc(worduse))
+
+kjv_stopwords <- c('shall', 'unto', 'thou', 'thee', 'thi', 
+                   'saith', 'upon', 'hath', 'say', 'thus', 'come', 
+                   'said', 'therefor', 'thereof', 'shalt', 'also', 
+                   'everi', 'hast', 'forth', 'came', 'like', 'let', 
+                   'thine', 'mine', 'thing', 'among', 'now', 'went', 
+                   'say', 'wherein')
+
+# Remove new stopwords
+prophet_corpus <- tm_map(prophet_corpus, removeWords, kjv_stopwords)
+
+# Remove whitespace
+prophet_corpus <- tm_map(prophet_corpus, stripWhitespace)
+
+prophet_corpus[[n]]$content
+```
+
+```{r remake-dtm}
 prophet_dtm <- DocumentTermMatrix(prophet_corpus)
 
 prophet_dtm
@@ -138,7 +162,7 @@ k <- 5 # number of topics
 
 ```{r FindTopicsNumber, message=F, results='hide', warning=F}
 topic_num_model <- FindTopicsNumber(dtm = prophet_dtm, 
-                             topics = seq(from = 4, to = 40, by = 2), 
+                             topics = seq(from = 4, to = 60, by = 2), 
                              metrics = c("CaoJuan2009", "Arun2010"), 
                              method = "Gibbs", 
                              control = list(nstart = 1, seed = c(30), 
@@ -155,7 +179,7 @@ FindTopicsNumber_plot(topic_num_model)
 ```
 
 ```{r build-LDA}
-k <- 40 
+k <- 46
 
 ldaOut <- LDA(x = prophet_dtm, k = k, method = "Gibbs", 
               control = list(nstart = nstart, seed = seed, best = best,
@@ -164,11 +188,11 @@ ldaOut <- LDA(x = prophet_dtm, k = k, method = "Gibbs",
 beep(1)
 ```
 
-```{r}
-terms(ldaOut, 10)
+```{r view-topic-terms}
+terms(ldaOut, 10) |> as_tibble()
 ```
 
-# Build Word Network
+# Build Chapter-Word Network
 
 ```{r convert-to-matrix-object}
 mat_prophets <- as.matrix(prophet_dtm)
@@ -239,7 +263,7 @@ ldaOut_topics <- topics(ldaOut)
 prophets_topics <- prophets |> 
   mutate(ldaTopic = ldaOut_topics)
 
-prophets_topics
+prophets_topics 
 ```
 
 ```{r number-of-topics-by-book, message=FALSE, warning=FALSE}
@@ -261,13 +285,8 @@ prophets_topics |>
 ```
 
 ```{r view-most-common-topics}
+# topic by chapter
 plot(ldaOut_topics)
-hist(ldaOut_topics)
-
-ggplot(prophets_topics, aes(x = ldaTopic)) + 
-  geom_histogram(bins = 40) + 
-  theme_minimal() + 
-  labs(title = "Frequency of Topics")
 
 topic_counts <- prophets_topics %>%
   count(ldaTopic)
@@ -281,12 +300,33 @@ ggplot(topic_counts,
   theme_minimal() + 
   labs(title = "Frequency of Topics",
        subtitle = 'Label is the number of times the topic occurs across all books',
-       y = 'Frequency of Topic') +
+       y = 'Frequency of Topic by Chapters') +
   theme(legend.position = 'none')+
   scale_x_continuous(breaks = unique(topic_counts$ldaTopic))
+
+
+# topic by book
+
+prophets_topics |> 
+  group_by(book_name, ldaTopic) |> 
+  summarize(n = n(), .groups = 'drop') |>
+  arrange(desc(n)) 
+
+prophets_topics |> 
+  group_by(book_name, ldaTopic) |> 
+  summarize(n = n(), .groups = 'drop') |>
+  mutate(book_topic = paste0(book_name, "_", as.character(ldaTopic))) |>
+  ggplot(aes(x = ldaTopic,
+             y = n)) +
+  geom_col() +
+  facet_wrap(~book_name)
 ```
 
 ```{r create-biadjacency-matrix}
+prophet_top_edgelist <- prophets_topics |> 
+  mutate(ldaTopic = as.character(ldaTopic)) |> 
+  select(book_name, ldaTopic)
+
 row_nodes <- unique(prophet_top_edgelist$book_name)
 col_nodes <- unique(prophet_top_edgelist$ldaTopic)
 
@@ -305,7 +345,7 @@ prophet_topic_net <- graph_from_biadjacency_matrix(incidence= biadj_matrix,
                                                    mode = 'all')
 ```
 
-```{r}
+```{r check-two-mode}
 type <- vertex_attr(prophet_topic_net, "type") # these are the two modes (word/chapter)
 
 table(type)  
@@ -313,8 +353,8 @@ table(type)
 
 ```{r plot, fig.height=9.5, fig.width=9.5}
 # topic color
-V(prophet_topic_net)$color[type == TRUE] <- rgb(red = 0, green = 0.5, 
-                                               blue = 0, alpha = .2) 
+V(prophet_topic_net)$color[type == TRUE] <- rgb(red = 0, green = 1, 
+                                               blue = 0, alpha = 0.2) 
 
 # book color
 V(prophet_topic_net)$color[type == FALSE] <- rgb(red = 0, green = 0, 
