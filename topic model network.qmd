@@ -9,6 +9,8 @@ editor: visual
 library(tidyverse)
 library(beepr) 
 library(igraph)
+library(janitor) # clean_names()
+library(GGally) # ggnet plotting
 
 # From Chapter 12 lab
 library(NLP)
@@ -192,72 +194,70 @@ beep(1)
 terms(ldaOut, 10) |> as_tibble()
 ```
 
-# Build Chapter-Word Network
+```{r topic-probabilities}
+# Get the posterior probabilities
+posterior_probs <- posterior(ldaOut)
 
-```{r convert-to-matrix-object}
-mat_prophets <- as.matrix(prophet_dtm)
-dim(mat_prophets)
+# Extract the topic probabilities for each document
+topic_probabilities <- posterior_probs$topics
+
+# Print the topic probabilities for each document
+top_five_long <- topic_probabilities |> as_tibble() |> 
+  mutate(chapter = topic_probabilities |> row.names()) |> 
+  select(chapter, everything()) |> 
+  clean_names() |> 
+  pivot_longer(cols = x1:x46, 
+               names_to = 'topic', 
+               values_to = 'probability') |> 
+  mutate(topic = str_remove(topic, 'x'), 
+         topic = paste0('topic_', topic), 
+         chapter = as.numeric(chapter)) |> 
+  group_by(chapter) |> 
+  arrange(chapter, desc(probability)) |> 
+  slice_head(n = 5) |> 
+  ungroup() |> 
+  group_by(chapter) |> 
+  mutate(top_topics = c('topic_1st',
+                        'topic_2nd',
+                        'topic_3rd',
+                        'topic_4th',
+                        'topic_5th')) |> 
+  ungroup() 
+
+top_five <- top_five_long |> 
+  pivot_wider(names_from = top_topics, 
+              values_from = c(topic, probability))
+
+top_five
+top_five_long
 ```
 
-```{r filter-most-used-words}
-worduse <- colSums(mat_prophets)
+```{r filter-to-most-likely-topics}
+threshold <- 0.70 # sets how much lower than the highest probability topic another topic has to be to be included
 
-mat_prophets_words_subset <- mat_prophets[, worduse > 5]
+top_prob_topics <- top_five_long |> 
+  group_by(chapter) |> 
+  mutate(max_prob = max(probability)) |> 
+  ungroup() |> 
+  group_by(chapter, top_topics) |> 
+  filter(probability > threshold*max_prob) |> 
+  ungroup()
 
-dim(mat_prophets_words_subset)
+top_prob_topics
 ```
 
-```{r create-network}
-prophet_word_net <- graph_from_biadjacency_matrix(mat_prophets_words_subset,
-                                                  mode = "all", weighted = T)
+```{r pivot-wide}
+top_prob_topics_wide <- top_prob_topics |> 
+  pivot_wider(names_from = top_topics, 
+              values_from = c(topic, probability))
 
-prophet_word_net
+top_prob_topics_wide
 ```
 
-```{r get-type-attr}
-type <- vertex_attr(prophet_word_net, "type") # these are the two modes (word/chapter)
-
-table(type)  
-```
-
-\>\>\> NEED TO GET THE BOOKS
-
-```{r}
-vertex_attr(prophet_word_net, "name")
-```
-
-```{r make-word-nodes-green}
-V(prophet_word_net)$color[type == TRUE] <- rgb(red = 0, green = 1, 
-                                               blue = 0, alpha = .2) 
-```
-
-```{r make-topic-color-blue}
-V(prophet_word_net)$color[type == FALSE] <- rgb(red = 0, green = 0, 
-                                                 blue = 1, alpha = .2)
-```
-
-```{r set-plot-arguments}
-V(prophet_word_net)$label <- V(prophet_word_net)$name
-V(prophet_word_net)$label[type == TRUE] <- NA 
-V(prophet_word_net)$label.color <- rgb(0, 0, .2, .85)
-V(prophet_word_net)$label.cex <- .75
-V(prophet_word_net)$size <- 3
-V(prophet_word_net)$frame.color <- V(prophet_word_net)$color
-```
-
-```{r set-edge-color}
-E(prophet_word_net)$color <- rgb(0.3, 0.3, 0.3, 0.08)
-```
-
-```{r plot, fig.height=9.5, fig.width=9.5}
-set.seed(106)
-plot(prophet_word_net, layout = layout_with_fr)
-```
-
-# Build Book-to-Topic Network
+# Build Book-to-Topic Network (one topic)
 
 ```{r get-topics-by-chapter}
-ldaOut_topics <- topics(ldaOut)
+ldaOut_topics <- topics(ldaOut) 
 
 # Add to tibble
 prophets_topics <- prophets |> 
@@ -287,7 +287,7 @@ prophets_topics |>
 ```{r view-most-common-topics}
 # topic by chapter
 plot(ldaOut_topics)
-
+ 
 topic_counts <- prophets_topics %>%
   count(ldaTopic)
 
@@ -306,7 +306,6 @@ ggplot(topic_counts,
 
 
 # topic by book
-
 prophets_topics |> 
   group_by(book_name, ldaTopic) |> 
   summarize(n = n(), .groups = 'drop') |>
@@ -320,6 +319,37 @@ prophets_topics |>
              y = n)) +
   geom_col() +
   facet_wrap(~book_name)
+
+
+# which books have the most topics and chapters
+combined_data <- prophets_topics |> 
+  group_by(book_name) |> 
+  summarize(n_chaps = n_distinct(chapter), 
+            n_tops = n_distinct(ldaTopic), 
+            .groups = 'drop') |> 
+  pivot_longer(cols = c(n_chaps, n_tops), 
+               names_to = "metric", 
+               values_to = "value")
+
+# Plot with facets and rotated x-axis labels
+ggplot(combined_data, aes(x = value, y = forcats::fct_reorder(book_name, value))) + 
+  geom_col(aes(fill = metric)) + 
+  facet_wrap(~ metric, scales = "free_x") + 
+  theme_minimal() + 
+  labs(x = "Value", y = "Book Name", fill = "Metric")
+
+rm(combined_data)
+
+prophets_topics |> 
+  group_by(book_name) |> 
+  summarize(n_chaps = n_distinct(chapter), 
+            n_tops = n_distinct(ldaTopic), 
+            .groups = 'drop') |>
+  mutate(tops_by_book_length = n_tops/n_chaps) |> 
+  ggplot(aes(y = forcats::fct_reorder(book_name, tops_by_book_length),  
+             x = tops_by_book_length)) + 
+  geom_col(fill = 'blue4') + 
+  theme_minimal()
 ```
 
 ```{r create-biadjacency-matrix}
@@ -343,11 +373,13 @@ for (i in 1:nrow(prophet_top_edgelist)) {
 
 prophet_topic_net <- graph_from_biadjacency_matrix(incidence= biadj_matrix, 
                                                    mode = 'all')
+
+prophet_topic_net 
 ```
 
 ```{r check-two-mode}
 type <- vertex_attr(prophet_topic_net, "type") # these are the two modes (word/chapter)
-
+ 
 table(type)  
 ```
 
@@ -362,5 +394,266 @@ V(prophet_topic_net)$color[type == FALSE] <- rgb(red = 0, green = 0,
 
 
 set.seed(106)
-plot(prophet_topic_net, layout = layout_with_fr)
+plot(prophet_topic_net, layout = layout_with_fr) 
+```
+
+# Build Chapter-to-Topic Network (multi topic)
+
+```{r add-all-topics-by-chapter}
+# see code for top_prob_topics above
+
+# Add to tibble
+prophets <- prophets |> 
+  rename(chapter_in_book = chapter) |> 
+  mutate(chapter = 1:250, 
+         chapter = as.numeric(chapter))
+
+prophets_topics_multi <- left_join(prophets,
+                                   as_tibble(top_prob_topics_wide), 
+                                   by = join_by(chapter))
+
+prophets_topics_multi
+```
+
+```{r pivot-long}
+prophets_topics_multi_long <- prophets_topics_multi |> 
+  pivot_longer(cols = topic_topic_1st:topic_topic_5th, 
+               names_to = 'topic_rank', 
+               values_to = 'ldaTopic') |> 
+  mutate(ldaTopic = str_remove(ldaTopic, 'topic_'), 
+         ldaTopic = as.numeric(ldaTopic))
+
+prophets_topics_multi_long <- prophets_topics_multi_long |> 
+  filter(!is.na(ldaTopic))
+```
+
+## Analysis of Topics
+
+```{r number-of-topics-by-book, message=FALSE, warning=FALSE}
+prophets_topics_multi_long |>  
+  group_by(book_name) |> 
+  summarize(n_chaps = n_distinct(chapter), 
+            n_topics = n_distinct(ldaTopic), .groups = 'drop') |> 
+  mutate(topics_chap_ratio = n_topics/n_chaps) |> 
+  arrange(desc(topics_chap_ratio))
+
+prophets_topics_multi_long |> 
+  group_by(book_name) |> 
+  summarize(n_chaps = n_distinct(chapter), 
+            n_topics = n_distinct(ldaTopic), .groups = 'drop') |> 
+  mutate(topics_chap_ratio = n_topics/n_chaps) |> 
+  ggplot(aes(y = n_topics, x = n_chaps)) + 
+  geom_point() + 
+  geom_smooth(method = 'lm', se = F) + 
+  geom_smooth(method = 'loess', color = 'red', se = F)
+```
+
+```{r data-viz-topics}
+# topic by chapter
+topic_counts2 <- prophets_topics_multi_long %>%
+  count(ldaTopic) 
+
+ggplot(topic_counts2, 
+       aes(x = ldaTopic, 
+           y = n)) + 
+  geom_col(fill = 'blue4') + 
+  geom_text(aes(label = n), 
+            nudge_y = 1.25) +
+  theme_minimal() + 
+  labs(title = "Frequency of Topics",
+       subtitle = 'Label is the number of times the topic occurs across all books',
+       y = 'Frequency of Topic by Chapters') +
+  theme(legend.position = 'none')+
+  scale_x_continuous(breaks = unique(topic_counts$ldaTopic))
+
+
+# topic by book
+prophets_topics_multi_long |> 
+  group_by(book_name, ldaTopic) |> 
+  summarize(n = n(), .groups = 'drop') |>
+  arrange(desc(n)) 
+
+prophets_topics_multi_long |> 
+  group_by(book_name, ldaTopic) |> 
+  summarize(n = n(), .groups = 'drop') |>
+  mutate(book_topic = paste0(book_name, "_", as.character(ldaTopic))) |>
+  ggplot(aes(x = ldaTopic,
+             y = n)) +
+  geom_col() +
+  facet_wrap(~book_name)
+
+
+# which books have the most topics and chapters
+combined_data <- prophets_topics_multi_long |> 
+  group_by(book_name) |> 
+  summarize(n_chaps = n_distinct(chapter), 
+            n_tops = n_distinct(ldaTopic), 
+            .groups = 'drop') |> 
+  pivot_longer(cols = c(n_chaps, n_tops), 
+               names_to = "metric", 
+               values_to = "value")
+
+# Plot with facets and rotated x-axis labels
+ggplot(combined_data, aes(x = value, y = forcats::fct_reorder(book_name, value))) + 
+  geom_col(aes(fill = metric)) + 
+  facet_wrap(~ metric, scales = "free_x") + 
+  theme_minimal() + 
+  labs(x = "Value", y = "Book Name", fill = "Metric")
+
+rm(combined_data)
+
+prophets_topics_multi_long |> 
+  group_by(book_name) |> 
+  summarize(n_chaps = n_distinct(chapter), 
+            n_tops = n_distinct(ldaTopic), 
+            .groups = 'drop') |>
+  mutate(tops_by_book_length = n_tops/n_chaps) |> 
+  ggplot(aes(y = forcats::fct_reorder(book_name, tops_by_book_length),  
+             x = tops_by_book_length)) + 
+  geom_col(fill = 'blue4') + 
+  theme_minimal()
+```
+
+## Build Network
+
+```{r create-biadjacency-matrix}
+prophet_top_multi_edgelist <- prophets_topics_multi_long |> 
+  mutate(ldaTopic = as.character(ldaTopic)) |> 
+  select(book_name, chapter, ldaTopic)
+
+row_nodes <- unique(prophet_top_multi_edgelist$chapter)
+col_nodes <- unique(prophet_top_multi_edgelist$ldaTopic)
+
+# Initialize the biadjacency matrix with zeros
+biadj_matrix <- matrix(0, nrow = length(row_nodes), ncol = length(col_nodes),
+                       dimnames = list(row_nodes, col_nodes))
+
+# Populate the biadjacency matrix
+for (i in 1:nrow(prophet_top_multi_edgelist)) {
+  row <- prophet_top_multi_edgelist$chapter[i]
+  col <- prophet_top_multi_edgelist$ldaTopic[i]
+  biadj_matrix[row, col] <- biadj_matrix[row, col] + 1
+}
+
+chapter_topic_multi_net <- graph_from_biadjacency_matrix(incidence = biadj_matrix, 
+                                                         mode = 'all')
+
+chapter_topic_multi_net
+```
+
+```{r check-two-mode}
+type <- vertex_attr(chapter_topic_multi_net, "type") # these are the two modes (word/chapter)
+
+table(type)  
+```
+
+```{r add-book-attr-to-chapter-nodes}
+V(chapter_topic_multi_net)$book[type == FALSE] <- prophets_topics_multi$book_name
+
+chapter_topic_multi_net
+```
+
+```{r plot}
+# topic color and label
+V(chapter_topic_multi_net)$color[type == TRUE] <- rgb(red = 0, green = 1, 
+                                               blue = 0, alpha = 0.2) 
+
+V(chapter_topic_multi_net)$label[type == TRUE] <- 
+  V(chapter_topic_multi_net)[type == TRUE]$name
+
+# chapter color and labeled by book
+V(chapter_topic_multi_net)$color[type == FALSE] <- rgb(red = 0, green = 0, 
+                                                 blue = 1, alpha = 0.1)
+
+V(chapter_topic_multi_net)$label[type == FALSE] <- 
+  V(chapter_topic_multi_net)[type == FALSE]$book
+
+
+set.seed(106)
+plot(chapter_topic_multi_net, layout = layout_with_fr) 
+
+# Labeled by Book
+ggnet2(net = chapter_topic_multi_net, 
+       node.color = V(chapter_topic_multi_net)$type,
+       palette = c("TRUE" = 'skyblue', 
+                   'FALSE' = 'yellow3'),
+       node.label = V(chapter_topic_multi_net)$label)
+
+
+# Colored by Book
+ggnet2(chapter_topic_multi_net, 
+       node.color = if_else(V(chapter_topic_multi_net)$type == FALSE, 
+                            V(chapter_topic_multi_net)$label, 
+                            'TopicNum'),
+       palette = c(TopicNum = 'red3',
+                   Isaiah = 'green4',
+                   Jeremiah = 'green1',
+                   Lamentations = 'green3',
+                   Ezekiel = 'green2',
+                   Daniel = 'darkgreen',
+                   Hosea = 'pink',
+                   Joel = 'cyan4',
+                   Amos = 'cyan',
+                   Obadiah = 'purple',
+                   Jonah = 'gold',
+                   Micah = 'navy',
+                   Nahum = 'maroon',
+                   Habakkuk = 'blue',
+                   Zephaniah = 'red',
+                   Haggai = 'violet',
+                   Zechariah = 'orange',
+                   Malachi = 'yellow4'),
+       node.label = if_else(V(chapter_topic_multi_net)$type == TRUE, 
+                            V(chapter_topic_multi_net)$label, 
+                            ""))
+```
+
+# Build Book-to-Topic Network (multi topic)
+
+```{r add-all-topics-by-chapter}
+# see code in previous section for the analysis of books, chapters, and topics
+```
+
+```{r create-biadjacency-matrix}
+prophet_top_multi_edgelist <- prophets_topics_multi_long |> 
+  mutate(ldaTopic = as.character(ldaTopic)) |> 
+  select(book_name, chapter, ldaTopic)
+
+row_nodes <- unique(prophet_top_multi_edgelist$book_name)
+col_nodes <- unique(prophet_top_multi_edgelist$ldaTopic)
+
+# Initialize the biadjacency matrix with zeros
+biadj_matrix <- matrix(0, nrow = length(row_nodes), ncol = length(col_nodes),
+                       dimnames = list(row_nodes, col_nodes))
+
+# Populate the biadjacency matrix
+for (i in 1:nrow(prophet_top_multi_edgelist)) {
+  row <- prophet_top_multi_edgelist$book_name[i]
+  col <- prophet_top_multi_edgelist$ldaTopic[i]
+  biadj_matrix[row, col] <- biadj_matrix[row, col] + 1
+}
+
+prophet_topic_multi_net <- graph_from_biadjacency_matrix(incidence = biadj_matrix, 
+                                                         mode = 'all')
+
+prophet_topic_multi_net
+```
+
+```{r check-two-mode}
+type <- vertex_attr(prophet_topic_multi_net, "type") # these are the two modes (word/chapter)
+
+table(type)  
+```
+
+```{r plot, fig.height=9.5, fig.width=9.5}
+# topic color 
+V(prophet_topic_multi_net)$color[type == TRUE] <- rgb(red = 0, green = 1, 
+                                               blue = 0, alpha = 0.2) 
+
+# book color 
+V(prophet_topic_multi_net)$color[type == FALSE] <- rgb(red = 0, green = 0, 
+                                                 blue = 1, alpha = 0.5)
+
+set.seed(106)
+plot(prophet_topic_multi_net, layout = layout_with_fr) 
 ```
