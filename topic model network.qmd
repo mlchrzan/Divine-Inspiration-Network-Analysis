@@ -585,24 +585,24 @@ ggnet2(chapter_topic_multi_net,
        node.color = if_else(V(chapter_topic_multi_net)$type == FALSE, 
                             V(chapter_topic_multi_net)$label, 
                             'TopicNum'),
-       palette = c(TopicNum = 'red3',
+       palette = c(TopicNum = 'red2',
                    Isaiah = 'green4',
-                   Jeremiah = 'green1',
+                   Jeremiah = 'lightgreen',
                    Lamentations = 'green3',
                    Ezekiel = 'green2',
                    Daniel = 'darkgreen',
-                   Hosea = 'pink',
-                   Joel = 'cyan4',
-                   Amos = 'cyan',
-                   Obadiah = 'purple',
-                   Jonah = 'gold',
-                   Micah = 'navy',
-                   Nahum = 'maroon',
-                   Habakkuk = 'blue',
-                   Zephaniah = 'red',
-                   Haggai = 'violet',
-                   Zechariah = 'orange',
-                   Malachi = 'yellow4'),
+                   Hosea = 'grey15',
+                   Joel = 'grey40',
+                   Amos = 'grey20',
+                   Obadiah = 'grey25',
+                   Jonah = 'grey30',
+                   Micah = 'grey35',
+                   Nahum = 'grey45',
+                   Habakkuk = 'grey50',
+                   Zephaniah = 'grey55',
+                   Haggai = 'grey60',
+                   Zechariah = 'grey65',
+                   Malachi = 'grey70'),
        node.label = if_else(V(chapter_topic_multi_net)$type == TRUE, 
                             V(chapter_topic_multi_net)$label, 
                             ""))
@@ -656,4 +656,12 @@ V(prophet_topic_multi_net)$color[type == FALSE] <- rgb(red = 0, green = 0,
 
 set.seed(106)
 plot(prophet_topic_multi_net, layout = layout_with_fr) 
+```
+
+# Network Analysis
+
+RQ:
+
+```{r}
+
 ```
