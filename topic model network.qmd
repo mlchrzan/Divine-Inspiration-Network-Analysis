@@ -570,7 +570,7 @@ V(chapter_topic_multi_net)$label[type == FALSE] <-
 
 
 set.seed(106)
-plot(chapter_topic_multi_net, layout = layout_with_fr) 
+# plot(chapter_topic_multi_net, layout = layout_with_fr) 
 
 # Labeled by Book
 ggnet2(net = chapter_topic_multi_net, 
@@ -586,17 +586,17 @@ ggnet2(chapter_topic_multi_net,
                             V(chapter_topic_multi_net)$label, 
                             'TopicNum'),
        palette = c(TopicNum = 'red2',
-                   Isaiah = 'green4',
-                   Jeremiah = 'lightgreen',
+                   Isaiah = 'darkgreen',
+                   Jeremiah = 'green4',
                    Lamentations = 'green3',
                    Ezekiel = 'green2',
-                   Daniel = 'darkgreen',
+                   Daniel = 'lightgreen',
                    Hosea = 'grey15',
-                   Joel = 'grey40',
                    Amos = 'grey20',
                    Obadiah = 'grey25',
                    Jonah = 'grey30',
                    Micah = 'grey35',
+                   Joel = 'grey40',
                    Nahum = 'grey45',
                    Habakkuk = 'grey50',
                    Zephaniah = 'grey55',
@@ -645,7 +645,7 @@ type <- vertex_attr(prophet_topic_multi_net, "type") # these are the two modes (
 table(type)  
 ```
 
-```{r plot, fig.height=9.5, fig.width=9.5}
+```{r plot, fig.height=8, fig.width=8}
 # topic color 
 V(prophet_topic_multi_net)$color[type == TRUE] <- rgb(red = 0, green = 1, 
                                                blue = 0, alpha = 0.2) 

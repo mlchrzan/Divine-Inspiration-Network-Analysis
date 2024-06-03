@@ -1,0 +1,251 @@
+---
+title: "network trained on all chapters"
+author: "mlc and kmr"
+format: html
+editor: visual
+---
+
+```{r libraries, message=FALSE}
+library(tidyverse)
+library(beepr) 
+library(igraph)
+library(janitor) # clean_names()
+library(GGally) # ggnet plotting
+
+# From Chapter 12 lab
+library(NLP)
+library(tm)
+library(SnowballC)
+library(topicmodels) 
+library(ldatuning) 
+```
+
+# Data Processing
+
+```{r load-data, message=FALSE}
+verses <- read.csv('bibledata_kr.csv')
+# all verses of the Bible
+```
+
+```{r cleaning}
+count(verses, Section)
+
+verses <- verses |> 
+  mutate(Section = if_else(Section == "Major 'Prophets", "Major Prophets", Section))
+
+count(verses, Section)
+```
+
+```{r aggregate-to-chapters}
+chapters <- verses |> 
+  group_by(book_id, book_name, chapter) |> 
+  summarize(text = paste(king_james_bible_kjv, collapse = " "), .groups = 'drop') |> 
+  full_join(verses |> select(book_id, book_name, chapter, Testament, Section)) |> 
+  distinct()
+
+chapters
+```
+
+```{r chapters-per-book}
+chapters |> 
+  group_by(book_name) |> 
+  summarize(n_chaps = n_distinct(chapter), .groups = 'drop') |> 
+  ggplot(aes(x = forcats::fct_reorder(book_name, n_chaps), 
+             y = n_chaps)) + 
+  geom_col(fill = 'blue4') + 
+  geom_text(aes(label = n_chaps), nudge_y = 1) + 
+  theme_minimal() + 
+  labs(# title = 'Number of Chapters (in Biblical Order)',
+       x = 'Number of Chapters', 
+       y = 'Book') + 
+  coord_flip()
+```
+
+```{r get-corpus}
+bible_corpus <- Corpus(VectorSource(chapters$text))
+
+length(bible_corpus)
+```
+
+```{r text-cleaning, warning=FALSE}
+# chapter number to check 
+n <- 2
+
+# Remove capital letters
+bible_corpus <- tm_map(bible_corpus, tolower)
+
+bible_corpus[[n]]$content
+
+# Split words
+gsub_function <- function(x, pattern) gsub(pattern, replacement = " ", x)
+split_words <- content_transformer(gsub_function)
+bible_corpus <- tm_map(bible_corpus, split_words, pattern = "/")
+
+bible_corpus[[n]]$content
+
+# Remove punctuation
+bible_corpus <- tm_map(bible_corpus, removePunctuation)
+
+bible_corpus[[n]]$content
+
+# Remove numbers
+bible_corpus <- tm_map(bible_corpus, removeNumbers)
+
+bible_corpus[[n]]$content
+
+# Remove stopwords
+bible_corpus <- tm_map(bible_corpus, removeWords, stopwords("english"))
+
+bible_corpus[[n]]$content
+
+# Remove whitespace
+bible_corpus <- tm_map(bible_corpus, stripWhitespace)
+
+bible_corpus[[n]]$content
+
+# Stem words
+bible_corpus <- tm_map(bible_corpus, stemDocument)
+
+bible_corpus[[n]]$content
+```
+
+```{r document-term-matrix}
+bible_dtm <- DocumentTermMatrix(bible_corpus)
+
+bible_dtm
+```
+
+```{r remove-specific-stopwords}
+mat_bible <- as.matrix(bible_dtm)
+worduse <- colSums(mat_bible)
+words <- colnames(mat_bible)
+
+tibble(words, worduse) |> 
+  arrange(desc(worduse))
+
+kjv_stopwords <- c('shall', 'unto', 'thou', 'thee', 'thi', 
+                   'saith', 'upon', 'hath', 'say', 'thus', 'come', 
+                   'said', 'therefor', 'thereof', 'shalt', 'also', 
+                   'everi', 'hast', 'forth', 'came', 'like', 'let', 
+                   'thine', 'mine', 'thing', 'among', 'now', 'went', 
+                   'say', 'wherein', 'peopl', 'even', 'now', 'may', 
+                   'put', 'neither', 'mose', 'two')
+
+# Remove new stopwords
+bible_corpus <- tm_map(bible_corpus, removeWords, kjv_stopwords)
+
+# Remove whitespace
+bible_corpus <- tm_map(bible_corpus, stripWhitespace)
+
+bible_corpus[[n]]$content
+```
+
+```{r remake-dtm}
+bible_dtm <- DocumentTermMatrix(bible_corpus)
+
+bible_dtm
+```
+
+#  Topic Modeling
+
+```{r key-LDA-inputs}
+burnin <- 200 # number of omitted Gibbs iterations at beginning
+iter <- 3000 # number of iterations
+thin <- 2000 # number of omitted iterations between each kept iteration 
+seed <- list(2003, 5,63, 100001, 765) #seeds to enable reproducibility
+nstart <- 5 # number of repeated random starts
+best <- TRUE # only continue model on the best model
+k <- 5 # number of topics
+```
+
+```{r FindTopicsNumber, message=F, results='hide', warning=F}
+topic_num_model_bible <- FindTopicsNumber(dtm = bible_dtm, 
+                             topics = seq(from = 60, to = 100, by = 2), 
+                             metrics = c("CaoJuan2009", "Arun2010"), 
+                             method = "Gibbs", 
+                             control = list(nstart = 1, seed = c(30), 
+                                            best = best, burnin = burnin, 
+                                            iter = iter, thin = thin), 
+                             mc.cores = 2,  verbose = TRUE)
+
+beep(1)
+topic_num_model_bible
+```
+
+```{r plot-fitmodel}
+FindTopicsNumber_plot(topic_num_model_bible) 
+```
+
+```{r build-LDA}
+k <- 80
+
+ldaOut <- LDA(x = bible_dtm, k = k, method = "Gibbs", 
+              control = list(nstart = nstart, seed = seed, best = best,
+                             burnin = burnin, iter = iter, thin = thin))
+
+beep(1)
+```
+
+```{r view-topic-terms}
+terms(ldaOut, 10) |> as_tibble()
+```
+
+```{r topic-probabilities}
+# Get the posterior probabilities
+posterior_probs <- posterior(ldaOut)
+
+# Extract the topic probabilities for each document
+topic_probabilities <- posterior_probs$topics
+
+# Print the topic probabilities for each document
+top_five_long <- topic_probabilities |> as_tibble() |> 
+  mutate(chapter = topic_probabilities |> row.names()) |> 
+  select(chapter, everything()) |> 
+  clean_names() |> 
+  pivot_longer(cols = -chapter, 
+               names_to = 'topic', 
+               values_to = 'probability') |> 
+  mutate(topic = str_remove(topic, 'x'), 
+         topic = paste0('topic_', topic), 
+         chapter = as.numeric(chapter)) |> 
+  group_by(chapter) |> 
+  arrange(chapter, desc(probability)) |> 
+  slice_head(n = 5) |> 
+  ungroup() |> 
+  group_by(chapter) |> 
+  mutate(top_topics = c('topic_1st',
+                        'topic_2nd',
+                        'topic_3rd',
+                        'topic_4th',
+                        'topic_5th')) |> 
+  ungroup() 
+
+top_five <- top_five_long |> 
+  pivot_wider(names_from = top_topics, 
+              values_from = c(topic, probability))
+
+top_five
+top_five_long
+```
+
+```{r filter-to-most-likely-topics}
+threshold <- 0.70 # sets how much lower than the highest probability topic another topic has to be to be included
+
+top_prob_topics <- top_five_long |> 
+  group_by(chapter) |> 
+  mutate(max_prob = max(probability)) |> 
+  ungroup() |> 
+  group_by(chapter, top_topics) |> 
+  filter(probability > threshold*max_prob) |> 
+  ungroup()
+
+top_prob_topics
+```
+
+```{r pivot-wide}
+top_prob_topics_wide <- top_prob_topics |> 
+  pivot_wider(names_from = top_topics, 
+              values_from = c(topic, probability))
+
+top_prob_topics_wide
+```
