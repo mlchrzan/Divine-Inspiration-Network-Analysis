@@ -1,0 +1,548 @@
+---
+title: "network trained on all chapters"
+author: "mlc and kmr"
+format: html
+editor: visual
+---
+
+```{r libraries, message=FALSE}
+library(tidyverse)
+library(beepr) 
+library(igraph)
+library(janitor) # clean_names()
+library(GGally) # ggnet plotting
+
+# From Chapter 12 lab
+library(NLP)
+library(tm)
+library(SnowballC)
+library(topicmodels) 
+library(ldatuning) 
+```
+
+# Data Processing
+
+```{r load-data, message=FALSE}
+setwd("~/Library/CloudStorage/GoogleDrive-kennedymreed10@gmail.com/My Drive/*Stanford EDS/2024.4 Spring 2/Social Network Methods/Social Network Project")
+verses <- read.csv("bibledata.csv")
+# all verses of the Bible
+
+```
+
+```{r aggregate-to-chapters}
+chapters <- verses |> 
+  group_by(book_id, book_name, chapter) |> 
+  summarize(text = paste(king_james_bible_kjv, collapse = " "), .groups = 'drop') |> 
+  full_join(verses |> select(book_id, book_name, chapter, Testament, Section, book.chapter, book.ch.a)) |> 
+  distinct()
+
+chapters
+```
+
+```{r chapters-per-book}
+chapters |> 
+  group_by(book_name) |> 
+  summarize(n_chaps = n_distinct(chapter), .groups = 'drop') |> 
+  ggplot(aes(x = forcats::fct_reorder(book_name, n_chaps), 
+             y = n_chaps)) + 
+  geom_col(fill = 'blue4') + 
+  geom_text(aes(label = n_chaps), nudge_y = 1) + 
+  theme_minimal() + 
+  labs(# title = 'Number of Chapters (in Biblical Order)',
+       x = 'Number of Chapters', 
+       y = 'Book') + 
+  coord_flip()
+```
+
+```{r get-corpus}
+bible_corpus <- Corpus(VectorSource(chapters$text))
+
+length(bible_corpus)
+```
+
+```{r text-cleaning, warning=FALSE}
+# chapter number to check 
+n <- 2
+
+# Remove capital letters
+bible_corpus <- tm_map(bible_corpus, tolower)
+
+bible_corpus[[n]]$content
+
+# Split words
+gsub_function <- function(x, pattern) gsub(pattern, replacement = " ", x)
+split_words <- content_transformer(gsub_function)
+bible_corpus <- tm_map(bible_corpus, split_words, pattern = "/")
+
+bible_corpus[[n]]$content
+
+# Remove punctuation
+bible_corpus <- tm_map(bible_corpus, removePunctuation)
+
+bible_corpus[[n]]$content
+
+# Remove numbers
+bible_corpus <- tm_map(bible_corpus, removeNumbers)
+
+bible_corpus[[n]]$content
+
+# Remove stopwords
+bible_corpus <- tm_map(bible_corpus, removeWords, stopwords("english"))
+
+bible_corpus[[n]]$content
+
+# Remove whitespace
+bible_corpus <- tm_map(bible_corpus, stripWhitespace)
+
+bible_corpus[[n]]$content
+
+# Stem words
+bible_corpus <- tm_map(bible_corpus, stemDocument)
+
+bible_corpus[[n]]$content
+```
+
+```{r document-term-matrix}
+bible_dtm <- DocumentTermMatrix(bible_corpus)
+
+bible_dtm
+```
+
+```{r remove-specific-stopwords}
+mat_bible <- as.matrix(bible_dtm)
+worduse <- colSums(mat_bible)
+words <- colnames(mat_bible)
+
+tibble(words, worduse) |> 
+  arrange(desc(worduse))
+
+kjv_stopwords <- c('shall', 'unto', 'thou', 'thee', 'thi', 
+                   'saith', 'upon', 'hath', 'say', 'thus', 'come', 
+                   'said', 'therefor', 'thereof', 'shalt', 'also', 
+                   'everi', 'hast', 'forth', 'came', 'like', 'let', 
+                   'thine', 'mine', 'thing', 'among', 'now', 'went', 
+                   'say', 'wherein', 'peopl', 'even', 'now', 'may', 
+                   'put', 'neither', 'mose', 'two')
+
+# Remove new stopwords
+bible_corpus <- tm_map(bible_corpus, removeWords, kjv_stopwords)
+
+# Remove whitespace
+bible_corpus <- tm_map(bible_corpus, stripWhitespace)
+
+bible_corpus[[n]]$content
+```
+
+```{r remake-dtm}
+bible_dtm <- DocumentTermMatrix(bible_corpus)
+
+bible_dtm
+```
+
+# Topic Modeling
+
+```{r key-LDA-inputs}
+burnin <- 200 # number of omitted Gibbs iterations at beginning
+iter <- 3000 # number of iterations
+thin <- 2000 # number of omitted iterations between each kept iteration 
+seed <- list(2003, 5,63, 100001, 765) #seeds to enable reproducibility
+nstart <- 5 # number of repeated random starts
+best <- TRUE # only continue model on the best model
+k <- 5 # number of topics
+```
+
+```{r FindTopicsNumber, message=F, results='hide', warning=F}
+topic_num_model_bible <- FindTopicsNumber(dtm = bible_dtm, 
+                             topics = seq(from = 60, to = 100, by = 2), 
+                             metrics = c("CaoJuan2009", "Arun2010"), 
+                             method = "Gibbs", 
+                             control = list(nstart = 1, seed = c(30), 
+                                            best = best, burnin = burnin, 
+                                            iter = iter, thin = thin), 
+                             mc.cores = 2,  verbose = TRUE)
+
+beep(1)
+topic_num_model_bible
+```
+
+```{r plot-fitmodel}
+FindTopicsNumber_plot(topic_num_model_bible) 
+```
+
+```{r build-LDA}
+k <- 80
+
+ldaOut <- LDA(x = bible_dtm, k = k, method = "Gibbs", 
+              control = list(nstart = nstart, seed = seed, best = best,
+                             burnin = burnin, iter = iter, thin = thin))
+
+beep(1)
+```
+
+```{r view-topic-terms}
+terms(ldaOut, 10) |> as_tibble()
+```
+
+```{r topic-probabilities}
+# Get the posterior probabilities
+posterior_probs <- posterior(ldaOut)
+
+# Extract the topic probabilities for each document
+topic_probabilities <- posterior_probs$topics
+
+# Print the topic probabilities for each document
+top_five_long <- topic_probabilities |> as_tibble() |> 
+  mutate(chapter = topic_probabilities |> row.names()) |> 
+  select(chapter, everything()) |> 
+  clean_names() |> 
+  pivot_longer(cols = -chapter, 
+               names_to = 'topic', 
+               values_to = 'probability') |> 
+  mutate(topic = str_remove(topic, 'x'), 
+         topic = paste0('topic_', topic), 
+         chapter = as.numeric(chapter)) |> 
+  group_by(chapter) |> 
+  arrange(chapter, desc(probability)) |> 
+  slice_head(n = 5) |> 
+  ungroup() |> 
+  group_by(chapter) |> 
+  mutate(top_topics = c('topic_1st',
+                        'topic_2nd',
+                        'topic_3rd',
+                        'topic_4th',
+                        'topic_5th')) |> 
+  ungroup() 
+
+top_five <- top_five_long |> 
+  pivot_wider(names_from = top_topics, 
+              values_from = c(topic, probability))
+
+top_five
+top_five_long
+```
+
+```{r filter-to-most-likely-topics}
+threshold <- 0.70 # sets how much lower than the highest probability topic another topic has to be to be included
+
+top_prob_topics <- top_five_long |> 
+  group_by(chapter) |> 
+  mutate(max_prob = max(probability)) |> 
+  ungroup() |> 
+  group_by(chapter, top_topics) |> 
+  filter(probability > threshold*max_prob) |> 
+  ungroup()
+
+top_prob_topics
+```
+
+```{r pivot-wide}
+top_prob_topics_wide <- top_prob_topics |> 
+  pivot_wider(names_from = top_topics, 
+              values_from = c(topic, probability))
+
+top_prob_topics_wide
+```
+
+
+# Build Chapter-Word Network
+
+```{r convert-to-matrix-object}
+mat_bible <- as.matrix(bible_dtm)
+dim(mat_bible)
+```
+
+```{r filter-most-used-words}
+worduse <- colSums(mat_bible)
+
+mat_bible_words_subset <- mat_bible[, worduse > 5]
+
+dim(mat_bible_words_subset)
+```
+#biadjacency --> incidence_matrix
+```{r create-network}
+bible_word_net <- graph_from_incidence_matrix(mat_bible_words_subset,
+                                                  mode = "all", weighted = T)
+
+bible_word_net
+```
+
+```{r get-type-attr}
+type <- vertex_attr(bible_word_net, "type") # these are the two modes (word/chapter)
+
+table(type)  
+```
+
+\>\>\> NEED TO GET THE BOOKS
+
+```{r}
+vertex_attr(bible_word_net, "name")
+```
+
+```{r make-word-nodes-green}
+V(bible_word_net)$color[type == TRUE] <- rgb(red = 0, green = 1, 
+                                               blue = 0, alpha = .2) 
+```
+
+```{r make-topic-color-blue}
+V(bible_word_net)$color[type == FALSE] <- rgb(red = 0, green = 0, 
+                                                 blue = 1, alpha = .2)
+```
+
+```{r set-plot-arguments}
+V(bible_word_net)$label <- V(bible_word_net)$name
+V(bible_word_net)$label[type == TRUE] <- NA 
+V(bible_word_net)$label.color <- rgb(0, 0, .2, .85)
+V(bible_word_net)$label.cex <- .75
+V(bible_word_net)$size <- 3
+V(bible_word_net)$frame.color <- V(bible_word_net)$color
+```
+
+```{r set-edge-color}
+E(bible_word_net)$color <- rgb(0.3, 0.3, 0.3, 0.08)
+```
+
+```{r plot, fig.height=9.5, fig.width=9.5}
+set.seed(106)
+plot(bible_word_net, layout = layout_with_fr)
+```
+
+
+# Build Book-to-Topic Network
+
+```{r get-topics-by-chapter}
+ldaOut_topics <- topics(ldaOut)
+
+# Add to tibble
+ch_topics <- chapters |> 
+  mutate(ldaTopic = ldaOut_topics)
+
+prophet_ch_topics <- ch_topics |>  filter(Section == 'Major Prophets' | Section == 'Minor Prophets')
+
+prophet_ch_topics 
+```
+
+
+```{r number-of-topics-by-book, message=FALSE, warning=FALSE}
+prophet_ch_topics |> 
+  group_by(book_name) |> 
+  summarize(n_chaps = n_distinct(chapter), 
+            n_topics = n_distinct(ldaTopic), .groups = 'drop') |> 
+  mutate(topics_chap_ratio = n_topics/n_chaps)
+
+prophet_ch_topics |> 
+  group_by(book_name) |> 
+  summarize(n_chaps = n_distinct(chapter), 
+            n_topics = n_distinct(ldaTopic), .groups = 'drop') |> 
+  mutate(topics_chap_ratio = n_topics/n_chaps) |> 
+  ggplot(aes(y = n_topics, x = n_chaps)) + 
+  geom_point() + 
+  geom_smooth(method = 'lm', se = F) + 
+  geom_smooth(method = 'loess', color = 'red', se = F)
+```
+
+```{r view-most-common-topics}
+# topic by chapter
+plot(ldaOut_topics)
+
+topic_counts <- prophet_ch_topics %>%
+  count(ldaTopic)
+
+ggplot(topic_counts, 
+       aes(x = ldaTopic, 
+           y = n)) + 
+  geom_col(fill = 'blue4') + 
+  geom_text(aes(label = n), 
+            nudge_y = 1.25) +
+  theme_minimal() + 
+  labs(title = "Frequency of Topics",
+       subtitle = 'Label is the number of times the topic occurs across all books',
+       y = 'Frequency of Topic by Chapters') +
+  theme(legend.position = 'none')+
+  scale_x_continuous(breaks = unique(topic_counts$ldaTopic))
+
+
+# topic by book
+
+prophet_ch_topics |> 
+  group_by(book_name, ldaTopic) |> 
+  summarize(n = n(), .groups = 'drop') |>
+  arrange(desc(n)) 
+
+prophet_ch_topics |> 
+  group_by(book_name, ldaTopic) |> 
+  summarize(n = n(), .groups = 'drop') |>
+  mutate(book_topic = paste0(book_name, "_", as.character(ldaTopic))) |>
+  ggplot(aes(x = ldaTopic,
+             y = n)) +
+  geom_col() +
+  facet_wrap(~book_name)
+```
+
+```{r create-biadjacency-matrix}
+prophet_top_edgelist <- prophet_ch_topics |> 
+  mutate(ldaTopic = as.character(ldaTopic)) |> 
+  select(book_name, ldaTopic)
+
+row_nodes <- unique(prophet_top_edgelist$book_name)
+col_nodes <- unique(prophet_top_edgelist$ldaTopic)
+
+# Initialize the biadjacency matrix with zeros
+biadj_matrix <- matrix(0, nrow = length(row_nodes), ncol = length(col_nodes),
+                       dimnames = list(row_nodes, col_nodes))
+
+# Populate the biadjacency matrix
+for (i in 1:nrow(prophet_top_edgelist)) {
+  row <- prophet_top_edgelist$book_name[i]
+  col <- prophet_top_edgelist$ldaTopic[i]
+  biadj_matrix[row, col] <- biadj_matrix[row, col] + 1
+}
+
+prophet_topic_net <- graph_from_incidence_matrix(incidence= biadj_matrix, 
+                                                   mode = 'all')
+```
+
+```{r check-two-mode}
+type <- vertex_attr(prophet_topic_net, "type") # these are the two modes (word/chapter)
+
+table(type)  
+```
+
+```{r plot, fig.height=9.5, fig.width=9.5}
+# topic color
+V(prophet_topic_net)$color[type == TRUE] <- rgb(red = 0, green = 1, 
+                                               blue = 0, alpha = 0.2) 
+
+# book color
+V(prophet_topic_net)$color[type == FALSE] <- rgb(red = 0, green = 0, 
+                                                 blue = 1, alpha = 0.5)
+
+
+set.seed(106)
+plot(prophet_topic_net, layout = layout_with_fr)
+```
+
+#chapter topic plot, color by book
+```{r create-biadjacency-matrix}
+prophet_chap_top_edgelist <- prophets_topics |> 
+  mutate(ldaTopic = as.character(ldaTopic)) |> 
+  select(book_name, book.ch.a, ldaTopic)
+
+row_nodes_ch <- unique(prophet_chap_top_edgelist$book.ch.a)
+col_nodes_ch <- unique(prophet_chap_top_edgelist$ldaTopic)
+
+# Initialize the biadjacency matrix with zeros
+biadj_matrix_ch <- matrix(0, nrow = length(row_nodes_ch), ncol = length(col_nodes_ch),
+                       dimnames = list(row_nodes_ch, col_nodes_ch))
+
+# Populate the biadjacency matrix
+for (i in 1:nrow(prophet_chap_top_edgelist)) {
+  row <- prophet_chap_top_edgelist$book.ch.a[i]
+  col <- prophet_chap_top_edgelist$ldaTopic[i]
+  biadj_matrix_ch[row, col] <- biadj_matrix_ch[row, col] + 1
+}
+
+prophet_chap_topic_net <- graph_from_incidence_matrix(incidence= biadj_matrix_ch, mode = 'all')
+```
+
+```{r check-two-mode}
+type <- vertex_attr(prophet_chap_topic_net, "type") # these are the two modes (word/chapter)
+
+table(type)
+list.vertex.attributes(prophet_chap_topic_net)
+```
+
+
+```{r, book names}
+#17 books
+
+# Isaiah
+# Jeremiah
+# Lamentations
+# Ezekiel
+# Daniel
+# Hosea
+# Joel
+# Amos
+# Obadiah
+# Jonah
+# Micah
+# Nahum
+# Habakkuk
+# Zephaniah
+# Haggai
+# Zechariah
+# Malachi
+```
+
+
+```{r, fig.height=100, fig.width=100}
+#book color
+
+#major prophets
+V(prophet_chap_topic_net)[grepl('Isa', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = 1, green = 0, blue = .2, alpha = 0.3)
+
+V(prophet_chap_topic_net)[grepl('Jer', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = .8, green = 0, blue = .4, alpha = 0.3)
+
+V(prophet_chap_topic_net)[grepl('Lam', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = .6, green = 0, blue = .6, alpha = 0.3)
+
+V(prophet_chap_topic_net)[grepl('Eze', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = .4, green = 0, blue = .8, alpha = 0.3)
+
+V(prophet_chap_topic_net)[grepl('Dan', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = .2, green = 0, blue = 1, alpha = 0.3)
+
+#minor prophets
+V(prophet_chap_topic_net)[grepl('Hos', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = 0, green = 0.5, blue = 1, alpha = 0.3)
+
+V(prophet_chap_topic_net)[grepl('Joe', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = 0, green = 0.6, blue = 1, alpha = 0.3)
+
+V(prophet_chap_topic_net)[grepl('Amo', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = 0, green = 0.7, blue = 1, alpha = 0.3)
+
+V(prophet_chap_topic_net)[grepl('Oba', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = 0, green = 0.8, blue = 1, alpha = 0.3)
+
+V(prophet_chap_topic_net)[grepl('Jon', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = 0, green = 0.9, blue = 1, alpha = 0.3)
+
+V(prophet_chap_topic_net)[grepl('Mic', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = 0, green = 1, blue = 1, alpha = 0.3)
+
+V(prophet_chap_topic_net)[grepl('Nah', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = 0, green = 1, blue = 0.9, alpha = 0.3)
+
+V(prophet_chap_topic_net)[grepl('Hab', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = 0, green = 1, blue = 0.8, alpha = 0.3)
+
+V(prophet_chap_topic_net)[grepl('Zep', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = 0, green = 1, blue = 0.7, alpha = 0.3)
+
+V(prophet_chap_topic_net)[grepl('Hag', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = 0, green = 1, blue = 0.6, alpha = 0.3)
+
+V(prophet_chap_topic_net)[grepl('Zec', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = 0, green = 1, blue = 0.5, alpha = 0.3)
+
+V(prophet_chap_topic_net)[grepl('Mal', V(prophet_chap_topic_net)$name)]$color <- 
+  rgb(red = 0, green = 1, blue = 0.4, alpha = 0.3)
+
+
+# topic color
+V(prophet_chap_topic_net)$color[type == TRUE] <- rgb(red = 1, green = 1, blue = 0, alpha = 0.8)
+
+#label size
+V(prophet_chap_topic_net)$label.cex <- .5
+
+set.seed(106)
+plot(prophet_chap_topic_net, layout = layout_with_fr, vertex.size = 5, vertex.frame.color = NA)
+
+```
+
+
+
+
