@@ -400,7 +400,7 @@ plot(prophet_topic_net, layout = layout_with_fr)
 # Build Chapter-to-Topic Network (multi topic)
 
 ```{r add-all-topics-by-chapter}
-# see code for top_prob_topics above
+# see code for top_prob_topics above for getting top_prob_topics_wide
 
 # Add to tibble
 prophets <- prophets |> 
