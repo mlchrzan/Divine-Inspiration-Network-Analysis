@@ -596,8 +596,9 @@ RQ:
 # Made from the book-topic network (not chapter-topic)
 
 # For adding Major/Minor Prophet attribute to network
-attribute_list <- do.call(list, as.list(chapters_topics_multi_prophets |> 
-  select(chapter, Section)))
+attribute_list <- do.call(list, as.list(chapters_topics_multi_prophets |>
+                                          #mutate(Section = as.factor(Section)) |>
+                                          select(chapter, Section)))
 
 # Build Network
 final_net <- network(biadj_matrix, bipartite = T, 
@@ -614,8 +615,21 @@ summary(mod1)
 
 We can interpret the coefficient in terms of the baseline probability of a tie existing. The probability is: `exp(-1.7309) / (1 + exp(-1.7309))` = 0.15047249608. Thus, about 15% of all possible edges actually exist.
 
-```{r}
-mod2 <- ergm(final_net ~ edges + b2factor("club_type_detailed"))
+```{r model-with-mode2-term}
+mod2 <- ergm(final_net ~ edges + b2factor("Section", levels = 1))
 
 summary(mod2)
+```
+
+```{r model-with-homophily-term}
+set.seed(1234)
+mod3 <- ergm(final_net ~ edges 
+             # + b2factor("Section") 
+             + b2nodematch("Section", beta = 0.25))
+
+summary(mod3)
+```
+
+```{r check-diagnostics}
+mcmc.diagnostics(mod3)
 ```
