@@ -131,7 +131,7 @@ deg_cent |>
 clusters <- cluster_fast_greedy(chapter_prophet_top_multi_net)
 
 clusters
-plot(clusters, chapter_prophet_top_multi_net)
+# plot(clusters, chapter_prophet_top_multi_net)
 ```
 
 ```{r save-clusters}
@@ -160,7 +160,8 @@ cluster_tib |>
   ungroup() |> 
   ggplot(aes(x = cluster,
              y = n_nodes, 
-             fill = as.factor(node_level))) + 
+             fill = as.factor(node_level))) +
+  scale_fill_manual(values = c('red', 'lightgreen')) + 
   geom_col(position = 'dodge') + 
   theme_minimal() + 
   theme(legend.position = 'bottom') + 
@@ -168,4 +169,34 @@ cluster_tib |>
        x = "Cluster", 
        y = 'Number of Nodes', 
        fill = 'Node Type')
+```
+
+I think the story being told here IS one of a new classification method. There seems to be a section of these books that includes a "major" prophet book, Lamentations, but that a lot of minor prophets are sharing the topics among themselves (cluster 4, where topics 16 and 43 seem to be pulling in a lot of minor prophet attention) while some of the other major prophets act almost like gravitational centers in the network, pulling in minor prophets near them (might be cool to get a lineology of these to see if the ones they pull into their clusters were near them). The one except to this appears to be Jeremiah pulling in Daniel, so two major prophets who share a cluster (probably because Daniel covers so many unique topics).
+
+```{r attach-clusts-to-network}
+V(chapter_prophet_top_multi_net)$cluster <- as.character(membership(clusters))
+V(chapter_prophet_top_multi_net)$centrality <- 
+  igraph::degree(chapter_prophet_top_multi_net, 
+                 mode = 'all')
+```
+
+```{r cluster_plot}
+set.seed(106)
+ggnet2(chapter_prophet_top_multi_net, 
+      node.color = V(chapter_prophet_top_multi_net)$cluster, 
+      palette = c("1" = '#377eb8', 
+                  "2" = '#ff7f00', 
+                  "3" = '#a6cee3',
+                  "4" = '#e41a1c',
+                  "5" = '#ffff33',
+                  "6" = '#984ea3',
+                  "7" = '#a65628',
+                  "8" = '#4daf4a'), 
+      node.label = V(chapter_prophet_top_multi_net)$name, 
+      label.size = 2.5, 
+      node.alpha = 0.75,
+      node.size = V(chapter_prophet_top_multi_net)$centrality,
+      legend.position = 'none', 
+      edge.color = 'lightgray')
+
 ```
