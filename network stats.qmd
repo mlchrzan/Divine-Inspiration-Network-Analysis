@@ -101,7 +101,7 @@ deg_cent |>
   theme_minimal() + 
   coord_flip() + 
   labs(title = 'Centrality Scores by Prophetic Book',
-       subtitle = 'Scores indicate some potential for a new classification beyond the Major/Minor Division',
+       subtitle = 'Scores show small evidence of need for a new classification beyond\nthe Major/Minor Division',
        x = 'Prophet Type', 
        y = 'Sum of Centrality Scores', 
        fill = 'Prophet Category') +
@@ -125,6 +125,47 @@ deg_cent |>
        y = 'Centrality Score')
 ```
 
-## Betweenness
-
 ## Clustering
+
+```{r get-clusters}
+clusters <- cluster_fast_greedy(chapter_prophet_top_multi_net)
+
+clusters
+plot(clusters, chapter_prophet_top_multi_net)
+```
+
+```{r save-clusters}
+cluster_tib <- tibble(cluster = as.numeric(membership(clusters)),
+       node = V(chapter_prophet_top_multi_net)$name) |> 
+  mutate(node_level = c(rep(0, 17), rep(1, 43))) |>
+  mutate(node_type = case_when(node_level == 1 ~ "Topic Number",
+                             node_level == 0 ~ "Minor Prophet")) |> 
+  mutate(node_type = if_else(node == 'Isaiah' |
+                               node == 'Jeremiah' |
+                               node == 'Lamentations' |
+                               node == 'Ezekiel' |
+                               node == 'Daniel', 
+                             "Major Prophet", 
+                             node_type)) |> 
+  arrange(cluster)
+
+cluster_tib
+```
+
+```{r analyze}
+cluster_tib |> 
+  mutate(node_level = if_else(node_level == 1, "Topic", "Book")) |> 
+  group_by(cluster, node_level) |> 
+  summarize(n_nodes = n()) |> 
+  ungroup() |> 
+  ggplot(aes(x = cluster,
+             y = n_nodes, 
+             fill = as.factor(node_level))) + 
+  geom_col(position = 'dodge') + 
+  theme_minimal() + 
+  theme(legend.position = 'bottom') + 
+  labs(title = "Number of Nodes in Each Cluster, Disaggregated by Node Type", 
+       x = "Cluster", 
+       y = 'Number of Nodes', 
+       fill = 'Node Type')
+```
