@@ -12,7 +12,282 @@ library(GGally)
 
 See network_trained_on_all_chapters for prior work
 
-# View
+# Chapter-to-Topic
+
+## View
+
+```{r network}
+chapter_prophet_topic_multi_net
+```
+
+```{r add-section-attr}
+book_sections <- chapters_topics_multi_prophets |> 
+  group_by(chapter) |> 
+  summarise(Section = Section, .groups = 'drop') |> 
+  distinct()
+
+V(chapter_prophet_topic_multi_net)$Section[type == FALSE] <- book_sections$Section
+
+chapter_prophet_topic_multi_net
+```
+
+```{r add-labels}
+# topic label
+V(chapter_prophet_topic_multi_net)$label[type == TRUE] <- 
+  V(chapter_prophet_topic_multi_net)[type == TRUE]$name
+
+V(chapter_prophet_topic_multi_net)$label[type == FALSE] <- 
+  V(chapter_prophet_topic_multi_net)[type == FALSE]$book_chap
+```
+
+```{r plot}
+set.seed(106)
+# ggnet2(net = chapter_prophet_topic_multi_net, 
+#        node.color = V(chapter_prophet_topic_multi_net)$type,
+#        palette = c("TRUE" = 'yellow3', 
+#                    'FALSE' = 'skyblue'),
+#        node.alpha = 0.75,
+#        node.label = V(chapter_prophet_topic_multi_net)$label, 
+#        node.shape = if_else(V(chapter_prophet_topic_multi_net)$type == FALSE,
+#                             V(chapter_prophet_topic_multi_net)$Section,
+#                             'Topic'),
+#        label.size = 2.5)
+
+ggnet2(net = chapter_prophet_topic_multi_net, 
+       node.color = if_else(V(chapter_prophet_topic_multi_net)$type == FALSE,
+                            V(chapter_prophet_topic_multi_net)$Section,
+                            'Topic'),
+       palette = c("Major Prophets" = 'darkgreen', 
+                   'Minor Prophets' = 'lightgreen', 
+                   "Topic" = rgb(red = 1, 
+                               green = 0.5, 
+                               blue = 0.5,
+                               alpha = 0.5)),
+       node.label = V(chapter_prophet_topic_multi_net)$label,
+       node.alpha = 0.75,
+       label.size = 2.5, 
+       legend.position = 'top')
+```
+
+## Examine
+
+### Centrality
+
+```{r calc-centrality}
+degree_centrality <- igraph::degree(chapter_prophet_topic_multi_net, 
+                                    mode = 'all')
+
+characteristics <- chapters_topics_multi_prophets |> 
+  group_by(chapter) |> 
+  summarize(Section = Section,
+            book_chap = book.ch.a,
+            n_words = sum(n_words),
+            .groups = 'drop') |> 
+  distinct()
+
+deg_cent <- degree_centrality |> 
+  as_tibble() |> 
+  mutate(node = degree_centrality |> names(), 
+         node = as.numeric(node),
+         node_level = c(rep(0, 250), rep(1, 43))) |> 
+  rename(deg_centrality = value, 
+         chapter = node) |> 
+  left_join(characteristics, 
+            by = join_by(chapter)) |> 
+  mutate(Section = if_else(is.na(Section), 
+                           'Topic Number', 
+                           Section)) |> 
+  rename(node_type = Section, 
+         node = chapter)
+
+deg_cent
+```
+
+```{r centrality-vs-length}
+deg_cent |> arrange(desc(deg_centrality))
+
+deg_cent |> 
+  filter(!is.na(n_words)) |> 
+  ggplot(aes(y = deg_centrality, 
+             x = n_words)) + 
+  geom_point() + 
+  geom_smooth(method = 'lm', 
+              se = F) + 
+  geom_smooth(method = 'loess', 
+              color = 'red3', 
+              se = F) + 
+  theme_minimal()
+```
+
+```{r prophet_cat_centrality}
+deg_cent |> 
+  filter(node_type != 'Topic Number') |> 
+  group_by(node_type) |> 
+  summarize(cent_sum = mean(deg_centrality, na.rm = T)) |> 
+  ggplot(aes(x = forcats::fct_reorder(node_type, cent_sum), 
+             y = cent_sum)) + 
+  geom_col(fill = 'darkgreen') + 
+  theme_minimal() + 
+  coord_flip() + 
+  labs(title = 'Average Centrality Scores by Prophet Category',
+       subtitle = '',
+       x = 'Prophet Type', 
+       y = 'Average of Centrality Scores')
+```
+
+```{r chapter_centrality}
+deg_cent |> 
+  filter(node_level == 0) |> 
+  group_by(book_chap, node_type) |> 
+  summarize(avg_cent = mean(deg_centrality), 
+            .groups = 'drop') |> 
+  arrange(desc(avg_cent)) |> 
+  slice_head(n = 20) |> 
+  ggplot(aes(x = fct_reorder(as.character(book_chap), avg_cent),
+             y = avg_cent)) + 
+  geom_col(aes(fill = node_type)) + 
+  scale_fill_manual(values = c('darkgreen', 'lightgreen')) +
+  coord_flip() + 
+  theme_minimal() + 
+  labs(title = '20 Most Central Chapters', 
+       x = 'Chapter', 
+       y = 'Centrality', 
+       fill = 'Prophet Category') + 
+  theme(legend.position = 'bottom')
+```
+
+```{r topic_centrality}
+deg_cent |> 
+  filter(node_type == "Topic Number") |> 
+  arrange(desc(deg_centrality)) |> 
+  slice_head(n = 20) |> 
+  mutate(node = as.character(node)) |> 
+  ggplot(aes(x = fct_reorder(node, deg_centrality),
+             y = deg_centrality)) + 
+  geom_col(fill = 'darkgreen') + 
+  coord_flip() + 
+  theme_minimal() + 
+  labs(title = '20 Most Central Topics', 
+       subtitle = 'Measured by Degree Centrality',
+       x = 'Topic', 
+       y = 'Centrality Score')
+```
+
+```{r centrality-vs-mode}
+# Is centrality more about the chapter or the topic? 
+deg_cent |> 
+  mutate(node_level = if_else(node_level == 0, 
+                              "Chapter", 
+                              "Topic")) |> 
+  group_by(node_level) |> 
+  summarize(avg_cent = mean(deg_centrality)) |> 
+  ggplot(aes(x = node_level,
+             y = avg_cent)) +
+  geom_col(aes(fill = node_level)) + 
+  scale_fill_manual(values = c('darkgreen', rgb(red = 1, 
+                                                green = 0.5, 
+                                                blue = 0.5))) +
+  theme_minimal() + 
+  labs(title = 'Centrality by Node Level', 
+       subtitle = 'Topics More Central than the Chapters',
+       x = 'Node Level', 
+       y = 'Average Centrality') + 
+  theme(legend.position = 'none')
+```
+
+### Clustering
+
+```{r get-clusters}
+clusters <- cluster_fast_greedy(chapter_prophet_topic_multi_net)
+
+clusters
+# plot(clusters, chapter_prophet_topic_multi_net)
+```
+
+```{r save-clusters}
+cluster_tib <- tibble(cluster = as.numeric(membership(clusters)),
+                      node = V(chapter_prophet_topic_multi_net)$name) |> 
+  mutate(node_level = c(rep(0, 250), rep(1, 43))) |>
+  rename(chapter = node) |> 
+  left_join(characteristics |> mutate(chapter = as.character(chapter)), 
+            by = join_by(chapter)) |> 
+  mutate(Section = if_else(is.na(Section), 
+                           'Topic Number', 
+                           Section)) |> 
+  rename(node_type = Section, 
+         node = chapter) |> 
+  arrange(cluster)
+
+cluster_tib
+```
+
+```{r analyze}
+cluster_tib |> 
+  mutate(node_level = if_else(node_level == 1, "Topic", "Chapter")) |> 
+  group_by(cluster, node_level) |> 
+  summarize(n_nodes = n()) |> 
+  ungroup() |> 
+  ggplot(aes(x = cluster,
+             y = n_nodes, 
+             fill = as.factor(node_level))) +
+  scale_fill_manual(values = c('darkgreen', 'red')) + 
+  geom_col(position = 'dodge') + 
+  theme_minimal() + 
+  theme(legend.position = 'bottom') + 
+  labs(title = "Number of Nodes in Each Cluster, Disaggregated by Node Type", 
+       x = "Cluster", 
+       y = 'Number of Nodes', 
+       fill = 'Node Type')
+```
+
+```{r attach-clusts-to-network}
+V(chapter_prophet_topic_multi_net)$cluster <- as.character(membership(clusters))
+V(chapter_prophet_topic_multi_net)$centrality <- 
+  igraph::degree(chapter_prophet_topic_multi_net, 
+                 mode = 'all')
+```
+
+```{r cluster_plot}
+clust_palette <- c('red4', '#ff7f00', '#a6cee3', 
+                   'darkgreen', '#ffff33', '#e41a1c',
+                   '#984ea3', '#a65628', '#f781bf', 
+                   '#b2df8a', '#6a3d9a', '#0054b0',
+                   '#b15928', '#fb9a99', '#cab2d6', 
+                   '#fdbf6f', '#33a02c', '#f010a0')
+
+set.seed(106)
+ggnet2(chapter_prophet_topic_multi_net, 
+      node.color = V(chapter_prophet_topic_multi_net)$cluster, 
+      palette = c("1" = clust_palette[1], 
+                  "2" = clust_palette[2],
+                  "3" = clust_palette[3],
+                  "4" = clust_palette[4],
+                  "5" = clust_palette[5],
+                  "6" = clust_palette[6],
+                  "7" = clust_palette[7],
+                  "8" = clust_palette[8],
+                  "9" = clust_palette[9],
+                  "10" = clust_palette[10],
+                  "11" = clust_palette[11],
+                  "12" = clust_palette[12],
+                  "13" = clust_palette[13],
+                  "14" = clust_palette[14],
+                  "15" = clust_palette[15],
+                  "16" = clust_palette[16],
+                  "17" = clust_palette[17],
+                  "18" = clust_palette[18]), 
+      node.label = if_else(V(chapter_prophet_topic_multi_net)$type == FALSE,
+                           V(chapter_prophet_topic_multi_net)$book_chap,
+                           V(chapter_prophet_topic_multi_net)$name), 
+      label.size = 2.5, 
+      node.alpha = 0.75,
+      legend.position = 'bottom', 
+      edge.color = 'lightgray')
+```
+
+# Book-to-Topic
+
+## View
 
 ```{r add-section-attr}
 book_sections <- chapters_topics_multi_prophets |> 
@@ -29,15 +304,12 @@ ggnet2(chapter_prophet_top_multi_net,
        node.color = if_else(V(chapter_prophet_top_multi_net)$type == FALSE, 
                             V(chapter_prophet_top_multi_net)$Section, 
                             'Topic'), 
-       palette = c(Topic = 'lightgreen',
-                   "Major Prophets" = rgb(red = 1, 
-                                          green = 0, 
-                                          blue = 0,
-                                          alpha = 0.5),
-                   "Minor Prophets" = rgb(red = 1, 
-                                          green = 0.5, 
-                                          blue = 0.5,
-                                          alpha = 0.5)), 
+       palette = c(Topic = rgb(red = 1, 
+                               green = 0.5, 
+                               blue = 0.5,
+                               alpha = 0.5),
+                   "Major Prophets" = 'darkgreen',
+                   "Minor Prophets" = 'lightgreen'), 
        node.label = V(chapter_prophet_top_multi_net)$name, 
        node.alpha = 0.75,
        label.size = 2.5, 
@@ -47,9 +319,9 @@ set.seed(106)
 plot(chapter_prophet_top_multi_net) 
 ```
 
-# Examine
+## Examine
 
-## Centrality
+### Centrality
 
 ```{r calc-centrality}
 degree_centrality <- igraph::degree(chapter_prophet_top_multi_net, 
@@ -125,7 +397,28 @@ deg_cent |>
        y = 'Centrality Score')
 ```
 
-## Clustering
+```{r centrality-vs-mode}
+deg_cent |> 
+  mutate(node_level = if_else(node_level == 0, 
+                              "Book", 
+                              "Topic")) |> 
+  group_by(node_level) |> 
+  summarize(avg_cent = mean(deg_centrality)) |> 
+  ggplot(aes(x = node_level,
+             y = avg_cent)) +
+  geom_col(aes(fill = node_level)) + 
+  scale_fill_manual(values = c('darkgreen', rgb(red = 1, 
+                                                green = 0.5, 
+                                                blue = 0.5))) +
+  theme_minimal() + 
+  labs(title = 'Centrality by Node Level', 
+       subtitle = 'Books More Central than the Topics',
+       x = 'Node Level', 
+       y = 'Average Centrality') + 
+  theme(legend.position = 'none')
+```
+
+### Clustering
 
 ```{r get-clusters}
 clusters <- cluster_fast_greedy(chapter_prophet_top_multi_net)
@@ -161,7 +454,7 @@ cluster_tib |>
   ggplot(aes(x = cluster,
              y = n_nodes, 
              fill = as.factor(node_level))) +
-  scale_fill_manual(values = c('red', 'lightgreen')) + 
+  scale_fill_manual(values = c('darkgreen', 'red')) + 
   geom_col(position = 'dodge') + 
   theme_minimal() + 
   theme(legend.position = 'bottom') + 
