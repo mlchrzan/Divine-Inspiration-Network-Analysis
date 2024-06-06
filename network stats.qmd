@@ -1,0 +1,130 @@
+---
+title: "network stats"
+author: "mlc and kmr"
+format: html
+editor: visual
+---
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(igraph)
+library(GGally)
+```
+
+See network_trained_on_all_chapters for prior work
+
+# View
+
+```{r add-section-attr}
+book_sections <- chapters_topics_multi_prophets |> 
+  group_by(book_id, book_name) |> 
+  summarise(Section = Section, .groups = 'drop') |> 
+  distinct()
+
+V(chapter_prophet_top_multi_net)$Section[type == FALSE] <- book_sections$Section
+```
+
+```{r plot, fig.height=8, fig.width=8}
+set.seed(106)
+ggnet2(chapter_prophet_top_multi_net, 
+       node.color = if_else(V(chapter_prophet_top_multi_net)$type == FALSE, 
+                            V(chapter_prophet_top_multi_net)$Section, 
+                            'Topic'), 
+       palette = c(Topic = 'lightgreen',
+                   "Major Prophets" = rgb(red = 1, 
+                                          green = 0, 
+                                          blue = 0,
+                                          alpha = 0.5),
+                   "Minor Prophets" = rgb(red = 1, 
+                                          green = 0.5, 
+                                          blue = 0.5,
+                                          alpha = 0.5)), 
+       node.label = V(chapter_prophet_top_multi_net)$name, 
+       node.alpha = 0.75,
+       label.size = 2.5, 
+       legend.position = 'top')
+
+set.seed(106)
+plot(chapter_prophet_top_multi_net) 
+```
+
+# Examine
+
+## Centrality
+
+```{r calc-centrality}
+degree_centrality <- igraph::degree(chapter_prophet_top_multi_net, 
+                                    mode = 'all')
+
+deg_cent <- degree_centrality |> 
+  as_tibble() |> 
+  mutate(node = degree_centrality |> names(), 
+         node_level = c(rep(0, 17), rep(1, 43))) |> 
+  select(node, node_level, value) |> 
+  rename(deg_centrality = value) |> 
+  arrange(desc(deg_centrality)) |> 
+  mutate(node_type = case_when(node_level == 1 ~ "Topic Number",
+                             node_level == 0 ~ "Minor Prophet")) |> 
+  mutate(node_type = if_else(node == 'Isaiah' |
+                               node == 'Jeremiah' |
+                               node == 'Lamentations' |
+                               node == 'Ezekiel' |
+                               node == 'Daniel', 
+                             "Major Prophet", 
+                             node_type))
+
+deg_cent
+```
+
+```{r prophet_cat_centrality}
+deg_cent |> 
+  filter(node_type != 'Topic Number') |> 
+  #group_by(node_type) |> 
+  #summarize(avg_cent = mean(deg_centrality, na.rm = T)) |> 
+  ggplot(aes(x = forcats::fct_reorder(node_type, deg_centrality), 
+             y = deg_centrality)) + 
+  geom_col(fill = 'darkgreen') + 
+  theme_minimal() + 
+  coord_flip() + 
+  labs(title = 'Centrality Scores by Prophet Category',
+       subtitle = 'Despite the larger number of book, the Minor Prophets have a lower total centrality\nthan the Major Prophets',
+       x = 'Prophet Type', 
+       y = 'Sum of Centrality Scores')
+```
+
+```{r prophet_centrality}
+deg_cent |> 
+  filter(node_type != 'Topic Number') |> 
+  ggplot(aes(x = forcats::fct_reorder(node, deg_centrality), 
+             y = deg_centrality)) + 
+  geom_col(aes(fill = node_type)) + 
+  scale_fill_manual(values = c('darkgreen', 'lightgreen')) +
+  theme_minimal() + 
+  coord_flip() + 
+  labs(title = 'Centrality Scores by Prophetic Book',
+       subtitle = 'Scores indicate some potential for a new classification beyond the Major/Minor Division',
+       x = 'Prophet Type', 
+       y = 'Sum of Centrality Scores', 
+       fill = 'Prophet Category') +
+  theme(legend.position = 'bottom')
+```
+
+```{r topic_centrality}
+deg_cent |> 
+  filter(node_type == "Topic Number") |> 
+  arrange(desc(deg_centrality)) |> 
+  slice_head(n = 10) |> 
+  # mutate(node = as.numeric(node)) |> 
+  ggplot(aes(x = fct_reorder(node, deg_centrality),
+             y = deg_centrality)) + 
+  geom_col(fill = 'darkgreen') + 
+  coord_flip() + 
+  theme_minimal() + 
+  labs(title = '10 Most Central Topics', 
+       subtitle = 'Measured by Degree Centrality',
+       x = 'Topic', 
+       y = 'Centrality Score')
+```
+
+## Betweenness
+
+## Clustering

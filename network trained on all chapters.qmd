@@ -147,6 +147,29 @@ bible_dtm <- DocumentTermMatrix(bible_corpus)
 bible_dtm
 ```
 
+```{r create-variables}
+# Number of chapters per book
+chapters <- chapters |> 
+  group_by(book_id) |> 
+  mutate(n_chaps = n_distinct(chapter)) |> 
+  ungroup()
+
+# Number of Words per Chapter
+mat_bible2 <- as.matrix(bible_dtm)
+wordcount <- rowSums(mat_bible2)
+
+chapters <- chapters |> 
+  mutate(n_words = wordcount) 
+
+# Number of Words per Book
+chapters <- chapters |> 
+  group_by(book_id) |> 
+  mutate(n_words_book = sum(n_words)) |> 
+  ungroup()
+
+chapters
+```
+
 # Topic Modeling
 
 ```{r key-LDA-inputs}
@@ -371,10 +394,14 @@ chapters_topics_multi_long |>
   theme_minimal()
 ```
 
-```{r data-viz-topics-prophet-books}
+```{r filter-to-prophets}
 chapters_topics_multi_prophets <- chapters_topics_multi_long |> 
   filter(Section == 'Major Prophets' | Section == 'Minor Prophets')
 
+chapters_topics_multi_prophets
+```
+
+```{r data-viz-topics-prophet-books}
 # topic by chapter
 topic_counts3 <- chapters_topics_multi_prophets %>%
   count(ldaTopic) 
@@ -476,8 +503,14 @@ type <- vertex_attr(chapter_prophet_topic_multi_net, "type") # these are the two
 table(type)  
 ```
 
-```{r add-book-attr-to-chapter-nodes}
-V(chapter_prophet_topic_multi_net)$book[type == FALSE] <- prophets_topics_multi$book_name
+```{r add-book-attr-to-chapter-nodes, warning=FALSE}
+book_names <- chapters_topics_multi_prophets |> 
+  group_by(chapter) |> 
+  summarize(book = book_name) |> 
+  ungroup() |> 
+  distinct()
+
+V(chapter_prophet_topic_multi_net)$book[type == FALSE] <- book_names$book
 
 chapter_prophet_topic_multi_net
 ```
@@ -585,10 +618,10 @@ V(chapter_prophet_top_multi_net)$color[type == FALSE] <- rgb(red = 0, green = 0,
                                                  blue = 1, alpha = 0.5)
 
 set.seed(106)
-plot(chapter_prophet_top_multi_net, layout = layout_with_fr) 
+plot(chapter_prophet_top_multi_net) 
 ```
 
-# Network Analysis
+# Network Analysis (all wrong currently...)
 
 RQ:
 
@@ -596,9 +629,13 @@ RQ:
 # Made from the book-topic network (not chapter-topic)
 
 # For adding Major/Minor Prophet attribute to network
-attribute_list <- do.call(list, as.list(chapters_topics_multi_prophets |>
-                                          #mutate(Section = as.factor(Section)) |>
-                                          select(chapter, Section)))
+attribute_list <- do.call(list, as.list(chapters_topics_multi_prophets |>  
+                                          select(chapter, 
+                                                 book.ch.a,
+                                                 n_chaps, 
+                                                 n_words,
+                                                 n_words_book,
+                                                 Section)))
 
 # Build Network
 final_net <- network(biadj_matrix, bipartite = T, 
@@ -608,28 +645,71 @@ final_net
 ```
 
 ```{r build-edge-model warning=F, message=F}
+set.seed(1234)
 mod1 <- ergm(final_net ~ edges)
+```
 
+```{r summary}
 summary(mod1)
 ```
 
 We can interpret the coefficient in terms of the baseline probability of a tie existing. The probability is: `exp(-1.7309) / (1 + exp(-1.7309))` = 0.15047249608. Thus, about 15% of all possible edges actually exist.
 
 ```{r model-with-mode2-term}
-mod2 <- ergm(final_net ~ edges + b2factor("Section", levels = 1))
+set.seed(1234)
+mod2 <- ergm(final_net ~ edges + b2factor("Section"))
+```
 
+```{r summary}
 summary(mod2)
 ```
 
 ```{r model-with-homophily-term}
 set.seed(1234)
-mod3 <- ergm(final_net ~ edges 
-             # + b2factor("Section") 
+mod3 <- ergm(final_net ~ edges  
              + b2nodematch("Section", beta = 0.25))
+```
 
+```{r summary}
 summary(mod3)
 ```
 
 ```{r check-diagnostics}
 mcmc.diagnostics(mod3)
+```
+
+```{r message = F}
+set.seed(1234)
+mod4 <- ergm(final_net ~ edges 
+             + b2nodematch("Section", beta = 0.25)
+             + b2cov("n_chaps"), 
+             control = control.ergm(MCMC.burnin = 30000, 
+                                    MCMC.samplesize = 5000))
+```
+
+```{r}
+summary(mod4)
+```
+
+```{r}
+# topic color 
+V(final_net)$color[type == TRUE] <- rgb(red = 0, green = 1, 
+                                        blue = 0, alpha = 0.2) 
+
+# book color, minor prophet
+V(final_net)$color[Section == 'Minor Prophet'] <- rgb(red = 0, green = 0, 
+                                         blue = 0.5, alpha = 0.5)
+
+# book color, major prophet
+V(final_net)$color[Section == 'Major Prophet'] <- rgb(red = 0, green = 0, 
+                                         blue = 1, alpha = 0.5)
+
+set.seed(106)
+plot(final_net, layout = layout_with_fr) 
+
+plot(final_net, 
+     vertex.col = chapters_topics_multi_prophets$Section)
+
+ggnet2(final_net, 
+       node.color = 'Section')
 ```
