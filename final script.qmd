@@ -1,0 +1,657 @@
+---
+title: "final script"
+author: "mlc and kmr"
+format: html
+editor: visual
+---
+
+```{r libraries, message=FALSE}
+library(tidyverse)
+library(beepr) 
+library(igraph)
+library(janitor) # clean_names()
+library(GGally) # ggnet plotting
+
+# From Chapter 12 lab
+library(NLP)
+library(tm)
+library(SnowballC)
+library(topicmodels) 
+library(ldatuning) 
+```
+
+# Data Processing
+
+```{r load-data, message=FALSE}
+verses <- read.csv('bibledata.csv')
+# all verses of the Bible
+
+verses
+```
+
+```{r cleaning}
+count(verses, Section)
+
+verses <- verses |> 
+  mutate(Section = if_else(Section == "Major 'Prophets", "Major Prophets", Section))
+
+count(verses, Section)
+```
+
+```{r aggregate-to-chapters}
+chapters <- verses |> 
+  group_by(book_id, book_name, chapter) |> 
+  summarize(text = paste(king_james_bible_kjv, collapse = " "), .groups = 'drop') |> 
+  full_join(verses |> select(book_id, book_name, 
+                             chapter, book.ch.a,
+                             Testament, Section)) |> 
+  distinct()
+
+chapters
+```
+
+```{r chapters-per-book}
+chapters |> 
+  group_by(book_name) |> 
+  summarize(n_chaps = n_distinct(chapter), .groups = 'drop') |> 
+  ggplot(aes(x = forcats::fct_reorder(book_name, n_chaps), 
+             y = n_chaps)) + 
+  geom_col(fill = 'blue4') + 
+  geom_text(aes(label = n_chaps), nudge_y = 1) + 
+  theme_minimal() + 
+  labs(# title = 'Number of Chapters (in Biblical Order)',
+       x = 'Number of Chapters', 
+       y = 'Book') + 
+  coord_flip()
+```
+
+```{r get-corpus}
+bible_corpus <- Corpus(VectorSource(chapters$text))
+
+length(bible_corpus)
+```
+
+```{r text-cleaning, warning=FALSE}
+# chapter number to check 
+n <- 2
+
+# Remove capital letters
+bible_corpus <- tm_map(bible_corpus, tolower)
+
+bible_corpus[[n]]$content
+
+# Split words
+gsub_function <- function(x, pattern) gsub(pattern, replacement = " ", x)
+split_words <- content_transformer(gsub_function)
+bible_corpus <- tm_map(bible_corpus, split_words, pattern = "/")
+
+bible_corpus[[n]]$content
+
+# Remove punctuation
+bible_corpus <- tm_map(bible_corpus, removePunctuation)
+
+bible_corpus[[n]]$content
+
+# Remove numbers
+bible_corpus <- tm_map(bible_corpus, removeNumbers)
+
+bible_corpus[[n]]$content
+
+# Remove stopwords
+bible_corpus <- tm_map(bible_corpus, removeWords, stopwords("english"))
+
+bible_corpus[[n]]$content
+
+# Remove whitespace
+bible_corpus <- tm_map(bible_corpus, stripWhitespace)
+
+bible_corpus[[n]]$content
+
+# Stem words
+bible_corpus <- tm_map(bible_corpus, stemDocument)
+
+bible_corpus[[n]]$content
+```
+
+```{r document-term-matrix}
+bible_dtm <- DocumentTermMatrix(bible_corpus)
+
+bible_dtm
+```
+
+```{r remove-specific-stopwords}
+mat_bible <- as.matrix(bible_dtm)
+worduse <- colSums(mat_bible)
+words <- colnames(mat_bible)
+
+tibble(words, worduse) |> 
+  arrange(desc(worduse))
+
+kjv_stopwords <- c('shall', 'unto', 'thou', 'thee', 'thi', 
+                   'saith', 'upon', 'hath', 'say', 'thus', 'come', 
+                   'said', 'therefor', 'thereof', 'shalt', 'also', 
+                   'everi', 'hast', 'forth', 'came', 'like', 'let', 
+                   'thine', 'mine', 'thing', 'among', 'now', 'went', 
+                   'say', 'wherein', 'peopl', 'even', 'now', 'may', 
+                   'put', 'neither', 'mose', 'two')
+
+# Remove new stopwords
+bible_corpus <- tm_map(bible_corpus, removeWords, kjv_stopwords)
+
+# Remove whitespace
+bible_corpus <- tm_map(bible_corpus, stripWhitespace)
+
+bible_corpus[[n]]$content
+```
+
+```{r remake-dtm}
+bible_dtm <- DocumentTermMatrix(bible_corpus)
+
+bible_dtm
+```
+
+```{r create-variables}
+# Number of chapters per book
+chapters <- chapters |> 
+  group_by(book_id) |> 
+  mutate(n_chaps = n_distinct(chapter)) |> 
+  ungroup()
+
+# Number of Words per Chapter
+mat_bible2 <- as.matrix(bible_dtm)
+wordcount <- rowSums(mat_bible2)
+
+chapters <- chapters |> 
+  mutate(n_words = wordcount) 
+
+# Number of Words per Book
+chapters <- chapters |> 
+  group_by(book_id) |> 
+  mutate(n_words_book = sum(n_words)) |> 
+  ungroup()
+
+chapters
+```
+
+# Topic Modeling
+
+```{r key-LDA-inputs}
+burnin <- 200 # number of omitted Gibbs iterations at beginning
+iter <- 3000 # number of iterations
+thin <- 2000 # number of omitted iterations between each kept iteration 
+seed <- list(2003, 5,63, 100001, 765) #seeds to enable reproducibility
+nstart <- 5 # number of repeated random starts
+best <- TRUE # only continue model on the best model
+k <- 5 # number of topics
+```
+
+```{r FindTopicsNumber, message=F, results='hide', warning=F}
+topic_num_model_bible <- FindTopicsNumber(dtm = bible_dtm, 
+                             topics = seq(from = 60, to = 100, by = 2), 
+                             metrics = c("CaoJuan2009", "Arun2010"), 
+                             method = "Gibbs", 
+                             control = list(nstart = 1, seed = c(30), 
+                                            best = best, burnin = burnin, 
+                                            iter = iter, thin = thin), 
+                             mc.cores = 2,  verbose = TRUE)
+
+beep(1)
+topic_num_model_bible
+```
+
+```{r plot-fitmodel}
+FindTopicsNumber_plot(topic_num_model_bible) 
+```
+
+```{r build-LDA}
+k <- 80
+
+ldaOut <- LDA(x = bible_dtm, k = k, method = "Gibbs", 
+              control = list(nstart = nstart, seed = seed, best = best,
+                             burnin = burnin, iter = iter, thin = thin))
+
+beep(1)
+```
+
+```{r view-topic-terms}
+terms(ldaOut, 10) |> as_tibble()
+```
+
+```{r topic-probabilities}
+# Get the posterior probabilities
+posterior_probs <- posterior(ldaOut)
+
+# Extract the topic probabilities for each document
+topic_probabilities <- posterior_probs$topics
+
+# Print the topic probabilities for each document
+top_five_long <- topic_probabilities |> as_tibble() |> 
+  mutate(chapter = topic_probabilities |> row.names()) |> 
+  select(chapter, everything()) |> 
+  clean_names() |> 
+  pivot_longer(cols = -chapter, 
+               names_to = 'topic', 
+               values_to = 'probability') |> 
+  mutate(topic = str_remove(topic, 'x'), 
+         topic = paste0('topic_', topic), 
+         chapter = as.numeric(chapter)) |> 
+  group_by(chapter) |> 
+  arrange(chapter, desc(probability)) |> 
+  slice_head(n = 5) |> 
+  ungroup() |> 
+  group_by(chapter) |> 
+  mutate(top_topics = c('topic_1st',
+                        'topic_2nd',
+                        'topic_3rd',
+                        'topic_4th',
+                        'topic_5th')) |> 
+  ungroup() 
+
+top_five <- top_five_long |> 
+  pivot_wider(names_from = top_topics, 
+              values_from = c(topic, probability))
+
+top_five
+top_five_long
+```
+
+```{r filter-to-most-likely-topics}
+threshold <- 0.70 # sets how much lower than the highest probability topic another topic has to be to be included
+
+top_prob_topics <- top_five_long |> 
+  group_by(chapter) |> 
+  mutate(max_prob = max(probability)) |> 
+  ungroup() |> 
+  group_by(chapter, top_topics) |> 
+  filter(probability > threshold*max_prob) |> 
+  ungroup()
+
+top_prob_topics
+```
+
+```{r pivot-wide}
+top_prob_topics_wide <- top_prob_topics |> 
+  pivot_wider(names_from = top_topics, 
+              values_from = c(topic, probability))
+
+top_prob_topics_wide
+```
+
+# \>\>\>
+
+```{r add-all-topics-by-chapter}
+# see code for top_prob_topics above for getting top_prob_topics_wide
+
+# Add to tibble
+chapters <- chapters |> 
+  rename(chapter_in_book = chapter) |> 
+  mutate(chapter = 1:1189, 
+         chapter = as.numeric(chapter))
+
+
+chapters_topics_multi <- left_join(chapters,
+                                   as_tibble(top_prob_topics_wide), 
+                                   by = join_by(chapter))
+
+chapters_topics_multi
+```
+
+```{r pivot-long}
+chapters_topics_multi_long <- chapters_topics_multi |> 
+  pivot_longer(cols = topic_topic_1st:topic_topic_5th, 
+               names_to = 'topic_rank', 
+               values_to = 'ldaTopic') |> 
+  mutate(ldaTopic = str_remove(ldaTopic, 'topic_'), 
+         ldaTopic = as.numeric(ldaTopic))
+
+chapters_topics_multi_long <- chapters_topics_multi_long |> 
+  filter(!is.na(ldaTopic))
+
+chapters_topics_multi_long
+```
+
+```{r filter-to-prophets}
+chapters_topics_multi_prophets <- chapters_topics_multi_long |> 
+  filter(Section == 'Major Prophets' | Section == 'Minor Prophets')
+
+chapters_topics_multi_prophets
+```
+
+## Exploration of Topics
+
+(can reproduce some plots I had in the original file just exploring how the topics show up or skip, ask Kennedy on Monday)
+
+# Build Book-to-Topic Network (multi topic)
+
+```{r create-biadjacency-matrix}
+chapter_prophet_top_multi_edgelist <- chapters_topics_multi_prophets |> 
+  mutate(ldaTopic = as.character(ldaTopic)) |> 
+  select(book_name, chapter, ldaTopic) |> 
+  mutate(chapter = as.character(chapter))
+
+row_nodes <- unique(chapter_prophet_top_multi_edgelist$book_name)
+col_nodes <- unique(chapter_prophet_top_multi_edgelist$ldaTopic)
+
+# Initialize the biadjacency matrix with zeros
+biadj_matrix <- matrix(0, nrow = length(row_nodes), ncol = length(col_nodes),
+                       dimnames = list(row_nodes, col_nodes))
+
+# Populate the biadjacency matrix
+for (i in 1:nrow(chapter_prophet_top_multi_edgelist)) {
+  row <- chapter_prophet_top_multi_edgelist$book_name[i]
+  col <- chapter_prophet_top_multi_edgelist$ldaTopic[i]
+  biadj_matrix[row, col] <- biadj_matrix[row, col] + 1
+}
+
+chapter_prophet_top_multi_net <- graph_from_biadjacency_matrix(incidence = biadj_matrix, 
+                                                         mode = 'all')
+
+chapter_prophet_top_multi_net
+```
+
+```{r check-two-mode}
+type <- vertex_attr(chapter_prophet_top_multi_net, "type") # these are the two modes (word/chapter)
+
+table(type)  
+```
+
+# Network Statistics
+
+## View Network
+
+```{r add-section-attr}
+book_sections <- chapters_topics_multi_prophets |> 
+  group_by(book_id, book_name) |> 
+  summarise(Section = Section, .groups = 'drop') |> 
+  distinct()
+
+V(chapter_prophet_top_multi_net)$Section[type == FALSE] <- book_sections$Section
+```
+
+```{r plot, fig.height=8, fig.width=8}
+set.seed(106)
+ggnet2(chapter_prophet_top_multi_net,
+       node.color = if_else(V(chapter_prophet_top_multi_net)$type == FALSE, 
+                            V(chapter_prophet_top_multi_net)$Section, 
+                            'Topic'), 
+       palette = c(Topic = rgb(red = 1, 
+                               green = 0.5, 
+                               blue = 0.5,
+                               alpha = 0.5),
+                   "Major Prophets" = 'darkgreen',
+                   "Minor Prophets" = 'lightgreen'), 
+       node.label = V(chapter_prophet_top_multi_net)$name, 
+       node.alpha = 0.75,
+       label.size = 2.5, 
+       legend.position = 'top')
+```
+
+## Calculate Network Statistics
+
+### Centrality
+
+#### Degree
+
+```{r calc-centrality}
+degree_centrality <- igraph::degree(chapter_prophet_top_multi_net, 
+                                    mode = 'all')
+
+deg_cent <- degree_centrality |> 
+  as_tibble() |> 
+  mutate(node = degree_centrality |> names(), 
+         node_level = c(rep(0, 17), rep(1, 43))) |> 
+  select(node, node_level, value) |> 
+  rename(deg_centrality = value) |> 
+  arrange(desc(deg_centrality)) |> 
+  mutate(node_type = case_when(node_level == 1 ~ "Topic Number",
+                             node_level == 0 ~ "Minor Prophet")) |> 
+  mutate(node_type = if_else(node == 'Isaiah' |
+                               node == 'Jeremiah' |
+                               node == 'Lamentations' |
+                               node == 'Ezekiel' |
+                               node == 'Daniel', 
+                             "Major Prophet", 
+                             node_type))
+
+deg_cent
+```
+
+#### Eigenvector
+
+```{r calc-eigen-cent}
+eig_centrality <- igraph::eigen_centrality(chapter_prophet_top_multi_net, 
+                                              scale = T)
+
+eig_cent <- eig_centrality$vector |> 
+  as_tibble() |> 
+  mutate(node = eig_centrality$vector |> names(), 
+         node_level = c(rep(0, 17), rep(1, 43))) |> 
+  select(node, node_level, value) |> 
+  rename(eig_centrality = value) |> 
+  arrange(desc(eig_centrality)) |> 
+  mutate(node_type = case_when(node_level == 1 ~ "Topic Number",
+                             node_level == 0 ~ "Minor Prophet")) |> 
+  mutate(node_type = if_else(node == 'Isaiah' |
+                               node == 'Jeremiah' |
+                               node == 'Lamentations' |
+                               node == 'Ezekiel' |
+                               node == 'Daniel', 
+                             "Major Prophet", 
+                             node_type))
+
+eig_cent
+```
+
+#### Comparative Analysis of Both Centrality Scores
+
+```{r table-wth-both}
+all_cent <- full_join(deg_cent, eig_cent, 
+                      by = join_by(node, node_level, node_type)) |> 
+  select(node, node_level, node_type, everything())
+
+all_cent
+```
+
+```{r calc-correlation}
+cor(all_cent$deg_centrality, all_cent$eig_centrality)
+```
+
+```{r make-long}
+all_cent_long <- all_cent |> 
+  pivot_longer(cols = contains("centrality"), 
+               names_to = "centrality_type", 
+               values_to = "centrality_score") |> 
+  mutate(centrality_type = if_else(centrality_type == 'deg_centrality',
+                                   "Degree Centrality", 
+                                   "Eigenvector Centrality"))
+
+all_cent_long
+```
+
+##### Visualizations
+
+```{r distributions}
+all_cent_long |> 
+  ggplot(aes(x = centrality_score)) + 
+  geom_histogram(aes(fill = centrality_type), 
+                 bins = 6) + 
+  scale_fill_manual(values = c('orange2', 'skyblue3')) +
+  facet_grid(~centrality_type, 
+             scales = 'free') + 
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  labs(title = "Distributions of Centrality Measures",
+       x = "Centrality Score")
+```
+
+```{r prophet_cat_centrality}
+all_cent_long |> 
+  filter(node_type != 'Topic Number') |> 
+  ggplot(aes(x = forcats::fct_reorder(node_type, centrality_score), 
+             y = centrality_score)) + 
+  geom_col(aes(fill = node_type)) +
+  scale_fill_manual(values = c('darkgreen', 'lightgreen')) +
+  theme_minimal() + 
+  facet_wrap( ~ centrality_type, 
+              ncol = 1, 
+              scales = 'free') + 
+  labs(title = 'Centrality Scores for the Traditional Categorization of this Section', 
+       subtitle = 'Traditional Classification Not Robust to Centrality Type', 
+       y = 'Centrality Score', 
+       x = 'Prophet Section', 
+       fill = 'Prophet Section') +
+  theme(legend.position = 'none') + 
+  coord_flip()
+```
+
+```{r book-centrality}
+all_cent_long |> 
+  filter(node_type != 'Topic Number') |> 
+  ggplot(aes(x = forcats::fct_reorder(node, centrality_score), 
+             y = centrality_score)) + 
+  geom_col(aes(fill = node_type)) + 
+  scale_fill_manual(values = c('darkgreen', 'lightgreen')) +
+  theme_minimal() + 
+  coord_flip() +
+  facet_grid(~centrality_type, 
+             scales = 'free') +
+  labs(title = 'Centrality Scores by Prophetic Book',
+       subtitle = 'Scores show small evidence of need for a new classification beyond\nthe Major/Minor Division, particularly with Eigenvector Centrality',
+       x = 'Prophet Section', 
+       y = 'Centrality Scores', 
+       fill = 'Prophet Section') +
+  theme(legend.position = 'bottom')
+```
+
+```{r topic_centrality}
+# DEGREE CENT ALWAYS BIGGER
+all_cent_long |> 
+  filter(node_type == "Topic Number") |>
+  arrange(desc(centrality_score)) |> 
+  slice_head(n = 10, by = centrality_type) |> 
+  ggplot(aes(x = fct_reorder2(node, centrality_type, -centrality_score),
+             y = centrality_score)) + 
+  geom_col(fill = rgb(red = 1, 
+                      green = 0.5, 
+                      blue = 0.5)) + 
+  coord_flip() + 
+  theme_minimal() + 
+  facet_grid( ~ centrality_type, 
+             scale = 'free') +
+  labs(title = '10 Most Central Topics', 
+       subtitle = 'Both measures have the same 10 most central topics, though ordering does change',
+       x = 'Topic Number', 
+       y = 'Centrality Score')
+```
+
+```{r centrality-vs-mode}
+all_cent_long |> 
+  mutate(node_level = if_else(node_level == 0, 
+                              "Book", 
+                              "Topic")) |> 
+  group_by(node_level, centrality_type) |> 
+  summarize(avg_cent = mean(centrality_score), 
+            .groups = 'drop') |> 
+  ggplot(aes(x = fct_reorder(node_level, avg_cent),
+             y = avg_cent)) +
+  geom_col(aes(fill = node_level)) + 
+  facet_grid(~centrality_type, 
+             scales = 'free') + 
+  coord_flip() +
+  scale_fill_manual(values = c('darkgreen', rgb(red = 1, 
+                                                green = 0.5, 
+                                                blue = 0.5))) +
+  theme_minimal() + 
+  labs(title = 'Centrality by Node Level', 
+       subtitle = 'Books More Central than the Topics',
+       x = 'Node Level', 
+       y = 'Average Centrality') + 
+  theme(legend.position = 'none')
+```
+
+### Clustering
+
+#### Fast and Greedy
+
+```{r get-clusters}
+clusters <- cluster_fast_greedy(chapter_prophet_top_multi_net)
+
+clusters
+```
+
+```{r save-clusters}
+cluster_tib <- tibble(cluster = as.numeric(membership(clusters)),
+       node = V(chapter_prophet_top_multi_net)$name) |> 
+  mutate(node_level = c(rep(0, 17), rep(1, 43))) |>
+  mutate(node_type = case_when(node_level == 1 ~ "Topic Number",
+                             node_level == 0 ~ "Minor Prophet")) |> 
+  mutate(node_type = if_else(node == 'Isaiah' |
+                               node == 'Jeremiah' |
+                               node == 'Lamentations' |
+                               node == 'Ezekiel' |
+                               node == 'Daniel', 
+                             "Major Prophet", 
+                             node_type)) |> 
+  arrange(cluster)
+
+cluster_tib
+```
+
+```{r analyze}
+cluster_tib |> 
+  mutate(node_level = if_else(node_level == 1, "Topic", "Book")) |> 
+  group_by(cluster, node_level) |> 
+  summarize(n_nodes = n(), .groups = 'drop') |> 
+  ggplot(aes(x = cluster,
+             y = n_nodes, 
+             fill = as.factor(node_level))) +
+  scale_fill_manual(values = c('darkgreen', rgb(red = 1, 
+                                                green = 0.5, 
+                                                blue = 0.5))) + 
+  geom_col(position = 'dodge') + 
+  theme_minimal() + 
+  theme(legend.position = 'bottom') + 
+  labs(title = "Number of Nodes in Each Cluster, Disaggregated by Node Type", 
+       x = "Cluster", 
+       y = 'Number of Nodes', 
+       fill = 'Node Type')
+```
+
+I think the story being told here IS one of a new classification method. There seems to be a section of these books that includes a "major" prophet book, Lamentations, but that a lot of minor prophets are sharing the topics among themselves (cluster 4, where topics 16 and 43 seem to be pulling in a lot of minor prophet attention) while some of the other major prophets act almost like gravitational centers in the network, pulling in minor prophets near them (might be cool to get a lineology of these to see if the ones they pull into their clusters were near them). The one except to this appears to be Jeremiah pulling in Daniel, so two major prophets who share a cluster (probably because Daniel covers so many unique topics).
+
+# Final Network Viz
+
+```{r attach-stats-to-network}
+V(chapter_prophet_top_multi_net)$cluster <- as.character(membership(clusters))
+V(chapter_prophet_top_multi_net)$deg_centrality <- 
+  igraph::degree(chapter_prophet_top_multi_net, 
+                 mode = 'all')
+V(chapter_prophet_top_multi_net)$eig_centrality <- 
+  igraph::eigen_centrality(chapter_prophet_top_multi_net, 
+                           scale = T)$vector
+
+chapter_prophet_top_multi_net
+```
+
+```{r cluster_plot}
+set.seed(106)
+ggnet2(chapter_prophet_top_multi_net,
+       node.color = V(chapter_prophet_top_multi_net)$cluster, 
+       palette = c("1" = '#377eb8', 
+                   "2" = 'orange2', 
+                   "3" = 'skyblue',
+                   "4" = '#e41a1c',
+                   "5" = 'yellow3',
+                   "6" = '#984ea3',
+                   "7" = '#a65628',
+                   "8" = '#4daf4a'), 
+       node.label = V(chapter_prophet_top_multi_net)$name, 
+       label.size = 4, 
+       node.alpha = 0.75,
+       #node.size = V(chapter_prophet_top_multi_net)$deg_centrality,
+       legend.position = 'none', 
+       edge.color = 'lightgray') +
+  labs(title = 'Topic-by-Book Network')
+#,
+#       subtitle = 'Nodes sized by their degree centrality')
+```

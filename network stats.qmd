@@ -6,6 +6,7 @@ editor: visual
 ---
 
 ```{r libraries, message=FALSE, warning=FALSE}
+library(tidyverse)
 library(igraph)
 library(GGally)
 ```
@@ -117,6 +118,8 @@ deg_cent |>
               color = 'red3', 
               se = F) + 
   theme_minimal()
+
+summary(lm(deg_centrality ~ n_words, data = deg_cent))
 ```
 
 ```{r prophet_cat_centrality}
@@ -132,7 +135,7 @@ deg_cent |>
   labs(title = 'Average Centrality Scores by Prophet Category',
        subtitle = '',
        x = 'Prophet Type', 
-       y = 'Average of Centrality Scores')
+       y = 'Average of Centrality Scores') 
 ```
 
 ```{r chapter_centrality}
@@ -153,7 +156,7 @@ deg_cent |>
        x = 'Chapter', 
        y = 'Centrality', 
        fill = 'Prophet Category') + 
-  theme(legend.position = 'bottom')
+  theme(legend.position = 'bottom') 
 ```
 
 ```{r topic_centrality}
@@ -170,7 +173,7 @@ deg_cent |>
   labs(title = '20 Most Central Topics', 
        subtitle = 'Measured by Degree Centrality',
        x = 'Topic', 
-       y = 'Centrality Score')
+       y = 'Degree Centrality Score') 
 ```
 
 ```{r centrality-vs-mode}
@@ -192,7 +195,7 @@ deg_cent |>
        subtitle = 'Topics More Central than the Chapters',
        x = 'Node Level', 
        y = 'Average Centrality') + 
-  theme(legend.position = 'none')
+  theme(legend.position = 'none') 
 ```
 
 ### Clustering
@@ -323,6 +326,8 @@ plot(chapter_prophet_top_multi_net)
 
 ### Centrality
 
+#### Degree
+
 ```{r calc-centrality}
 degree_centrality <- igraph::degree(chapter_prophet_top_multi_net, 
                                     mode = 'all')
@@ -375,7 +380,7 @@ deg_cent |>
   labs(title = 'Centrality Scores by Prophetic Book',
        subtitle = 'Scores show small evidence of need for a new classification beyond\nthe Major/Minor Division',
        x = 'Prophet Type', 
-       y = 'Sum of Centrality Scores', 
+       y = 'Centrality Scores', 
        fill = 'Prophet Category') +
   theme(legend.position = 'bottom')
 ```
@@ -418,7 +423,133 @@ deg_cent |>
   theme(legend.position = 'none')
 ```
 
+#### Eigenvector
+
+```{r calc-eigen-cent}
+eig_centrality <- igraph::eigen_centrality(chapter_prophet_top_multi_net, 
+                                              scale = T)
+
+eig_cent <- eig_centrality$vector |> 
+  as_tibble() |> 
+  mutate(node = eig_centrality$vector |> names(), 
+         node_level = c(rep(0, 17), rep(1, 43))) |> 
+  select(node, node_level, value) |> 
+  rename(eig_centrality = value) |> 
+  arrange(desc(eig_centrality)) |> 
+  mutate(node_type = case_when(node_level == 1 ~ "Topic Number",
+                             node_level == 0 ~ "Minor Prophet")) |> 
+  mutate(node_type = if_else(node == 'Isaiah' |
+                               node == 'Jeremiah' |
+                               node == 'Lamentations' |
+                               node == 'Ezekiel' |
+                               node == 'Daniel', 
+                             "Major Prophet", 
+                             node_type))
+
+eig_cent
+```
+
+```{r prophet_cat_centrality}
+eig_cent |> 
+  filter(node_type != 'Topic Number') |> 
+  #group_by(node_type) |> 
+  #summarize(avg_cent = mean(deg_centrality, na.rm = T)) |> 
+  ggplot(aes(x = forcats::fct_reorder(node_type, eig_centrality), 
+             y = eig_centrality)) + 
+  geom_col(fill = 'darkgreen') + 
+  theme_minimal() + 
+  coord_flip() + 
+  labs(title = 'Centrality Scores by Prophet Category',
+       subtitle = 'Despite the larger number of book, the Minor Prophets have a lower total centrality\nthan the Major Prophets',
+       x = 'Prophet Type', 
+       y = 'Sum of Centrality Scores')
+```
+
+```{r}
+eig_cent |> 
+  filter(node_type != 'Topic Number') |> 
+  ggplot(aes(x = forcats::fct_reorder(node, eig_centrality), 
+             y = eig_centrality)) + 
+  geom_col(aes(fill = node_type)) + 
+  scale_fill_manual(values = c('darkgreen', 'lightgreen')) +
+  theme_minimal() + 
+  coord_flip() + 
+  labs(title = 'Centrality Scores by Prophetic Book',
+       subtitle = 'Scores show small evidence of need for a new classification beyond\nthe Major/Minor Division',
+       x = 'Prophet Type', 
+       y = 'Centrality Scores', 
+       fill = 'Prophet Category') +
+  theme(legend.position = 'bottom')
+```
+
+```{r topic_centrality}
+eig_cent |> 
+  filter(node_type == "Topic Number") |> 
+  arrange(desc(eig_centrality)) |> 
+  slice_head(n = 10) |> 
+  # mutate(node = as.numeric(node)) |> 
+  ggplot(aes(x = fct_reorder(node, eig_centrality),
+             y = eig_centrality)) + 
+  geom_col(fill = 'darkgreen') + 
+  coord_flip() + 
+  theme_minimal() + 
+  labs(title = '10 Most Central Topics', 
+       subtitle = 'Measured by Eigenvector Centrality',
+       x = 'Topic', 
+       y = 'Centrality Score')
+```
+
+```{r centrality-vs-mode}
+eig_cent |> 
+  mutate(node_level = if_else(node_level == 0, 
+                              "Book", 
+                              "Topic")) |> 
+  group_by(node_level) |> 
+  summarize(avg_cent = mean(eig_centrality)) |> 
+  ggplot(aes(x = node_level,
+             y = avg_cent)) +
+  geom_col(aes(fill = node_level)) + 
+  scale_fill_manual(values = c('darkgreen', rgb(red = 1, 
+                                                green = 0.5, 
+                                                blue = 0.5))) +
+  theme_minimal() + 
+  labs(title = 'Centrality by Node Level', 
+       subtitle = 'Books More Central than the Topics',
+       x = 'Node Level', 
+       y = 'Average Centrality') + 
+  theme(legend.position = 'none')
+```
+
+#### Comparative Analysis of Both Centrality Scores
+
+```{r table-wth-both}
+all_cent <- full_join(deg_cent, eig_cent, 
+                      by = join_by(node, node_level, node_type)) |> 
+  select(node, node_level, node_type, everything())
+
+all_cent
+```
+
+```{r calc-correlation}
+cor(all_cent$deg_centrality, all_cent$eig_centrality)
+```
+
+```{r make-long}
+all_cent_long <- all_cent |> 
+  pivot_longer(cols = contains("centrality"), 
+               names_to = "centrality_type", 
+               values_to = "centrality_scores")
+
+all_cent_long
+```
+
+```{r visualizations}
+all_cent_long
+```
+
 ### Clustering
+
+#### Fast and Greedy
 
 ```{r get-clusters}
 clusters <- cluster_fast_greedy(chapter_prophet_top_multi_net)

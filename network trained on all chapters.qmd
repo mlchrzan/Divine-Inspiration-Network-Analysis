@@ -24,8 +24,10 @@ library(ldatuning)
 # Data Processing
 
 ```{r load-data, message=FALSE}
-verses <- read.csv('bibledata_kr.csv')
+verses <- read.csv('bibledata.csv')
 # all verses of the Bible
+
+verses
 ```
 
 ```{r cleaning}
@@ -41,7 +43,9 @@ count(verses, Section)
 chapters <- verses |> 
   group_by(book_id, book_name, chapter) |> 
   summarize(text = paste(king_james_bible_kjv, collapse = " "), .groups = 'drop') |> 
-  full_join(verses |> select(book_id, book_name, chapter, Testament, Section)) |> 
+  full_join(verses |> select(book_id, book_name, 
+                             chapter, book.ch.a,
+                             Testament, Section)) |> 
   distinct()
 
 chapters
@@ -280,7 +284,7 @@ top_prob_topics_wide
 # see code for top_prob_topics above for getting top_prob_topics_wide
 
 # Add to tibble
-chapters <- chapters|> 
+chapters <- chapters |> 
   rename(chapter_in_book = chapter) |> 
   mutate(chapter = 1:1189, 
          chapter = as.numeric(chapter))
@@ -510,7 +514,14 @@ book_names <- chapters_topics_multi_prophets |>
   ungroup() |> 
   distinct()
 
+book_chap_names <- chapters_topics_multi_prophets |> 
+  group_by(chapter) |> 
+  summarize(bk_ch = book.ch.a, .groups = 'drop') |> 
+  distinct()
+
 V(chapter_prophet_topic_multi_net)$book[type == FALSE] <- book_names$book
+
+V(chapter_prophet_topic_multi_net)$book_chap[type == FALSE] <- book_chap_names$bk_ch
 
 chapter_prophet_topic_multi_net
 ```
