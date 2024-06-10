@@ -483,6 +483,9 @@ V(chapter_prophet_top_multi_net)$Section[type == FALSE] <- book_sections$Section
 ```{r plot, fig.height=8, fig.width=8}
 set.seed(106)
 plot <- ggnet2(chapter_prophet_top_multi_net,
+       node.shape = if_else(V(chapter_prophet_top_multi_net)$type == FALSE, 
+                            V(chapter_prophet_top_multi_net)$Section, 
+                            'Topic'), 
        node.color = if_else(V(chapter_prophet_top_multi_net)$type == FALSE, 
                             V(chapter_prophet_top_multi_net)$Section, 
                             'Topic'), 
@@ -496,12 +499,12 @@ plot <- ggnet2(chapter_prophet_top_multi_net,
        node.alpha = 0.75,
        label.size = 2.5, 
        edge.size = E(chapter_prophet_top_multi_net)$weight/10,
-       legend.position = 'top') + 
+       legend.position = 'none') + 
   labs(title = 'Book-to-Topic Network',
-       subtitle = 'Edges sized by weight, which is determined by the number of times a topic appears in a chapter')
+       subtitle = 'Edges sized by weight, which is determined by the number of times a topic appears in a chapter.\nNodes colored and shaped by mode and section.')
 
 ggsave("network.png", plot = plot, 
-       width = 8, height = 4.5, dpi = 1200, 
+       width = 8, height = 6, dpi = 1200, 
        bg = 'white')
 
 plot
@@ -777,6 +780,41 @@ all_cent_long |>
   theme(legend.position = 'none')
 ```
 
+```{r all-centrality-comparison}
+plot <- all_cent_long |>
+  arrange(desc(centrality_score)) |> 
+  slice_head(n = 10, by = centrality_type) |> 
+  group_by(node) |> 
+  mutate(top_ten_count = n(), 
+         top_ten_count = as.factor(top_ten_count), 
+         top_ten_count = if_else(top_ten_count == 1, 
+                                 "No", 
+                                 "Yes")) |> 
+  ungroup() |> 
+  ggplot(aes(x = fct_reorder2(node, top_ten_count, -centrality_score), 
+             y = centrality_score, 
+             fill = node_type)) +
+  scale_fill_manual(values = c('darkgreen', 'lightgreen', rgb(red = 1, 
+                                                               green = 0.5, 
+                                                               blue = 0.5))) +
+  geom_col(position = 'dodge') +
+  facet_wrap(~ centrality_type, scales = 'free_x') +
+  theme_minimal() + 
+  coord_flip() +
+  theme(legend.position = 'bottom') +
+  labs(title = 'Centrality Scores for All Nodes',
+       subtitle = "Top 10 Centrality Scores across all Modes",
+       x = 'Node', 
+       y = 'Centrality Score', 
+       fill = 'Node Type')
+
+ggsave("cent_scores_overall.png", plot = plot, 
+       width = 8, height = 4.5, dpi = 1200, 
+       bg = 'white')
+
+plot
+```
+
 ### Clustering
 
 #### Fast and Greedy
@@ -807,13 +845,13 @@ cluster_tib
 
 ```{r analyze}
 plot <- cluster_tib |> 
-  mutate(node_level = if_else(node_level == 1, "Topic", "Book")) |> 
-  group_by(cluster, node_level) |> 
+  #mutate(node_level = if_else(node_level == 1, "Topic", "Book")) |> 
+  group_by(cluster, node_type) |> 
   summarize(n_nodes = n(), .groups = 'drop') |> 
   ggplot(aes(x = cluster,
              y = n_nodes, 
-             fill = as.factor(node_level))) +
-  scale_fill_manual(values = c('darkgreen', rgb(red = 1, 
+             fill = as.factor(node_type))) +
+  scale_fill_manual(values = c('darkgreen', "lightgreen", rgb(red = 1, 
                                                 green = 0.5, 
                                                 blue = 0.5))) + 
   geom_col(position = 'dodge') + 
