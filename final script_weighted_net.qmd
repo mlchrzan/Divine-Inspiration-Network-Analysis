@@ -449,8 +449,10 @@ for (i in 1:nrow(chapter_prophet_top_multi_edgelist)) {
   biadj_matrix[row, col] <- biadj_matrix[row, col] + 1
 }
 
-chapter_prophet_top_multi_net <- graph_from_biadjacency_matrix(incidence = biadj_matrix, 
-                                                         mode = 'all')
+chapter_prophet_top_multi_net <- 
+  graph_from_biadjacency_matrix(incidence = biadj_matrix, 
+                                mode = 'all', 
+                                weighted = T)
 
 chapter_prophet_top_multi_net
 ```
@@ -459,6 +461,10 @@ chapter_prophet_top_multi_net
 type <- vertex_attr(chapter_prophet_top_multi_net, "type") # these are the two modes (word/chapter)
 
 table(type)  
+```
+
+```{r check-weights}
+E(chapter_prophet_top_multi_net)$weight
 ```
 
 # Network Statistics
@@ -476,7 +482,7 @@ V(chapter_prophet_top_multi_net)$Section[type == FALSE] <- book_sections$Section
 
 ```{r plot, fig.height=8, fig.width=8}
 set.seed(106)
-ggnet2(chapter_prophet_top_multi_net,
+plot <- ggnet2(chapter_prophet_top_multi_net,
        node.color = if_else(V(chapter_prophet_top_multi_net)$type == FALSE, 
                             V(chapter_prophet_top_multi_net)$Section, 
                             'Topic'), 
@@ -489,7 +495,16 @@ ggnet2(chapter_prophet_top_multi_net,
        node.label = V(chapter_prophet_top_multi_net)$name, 
        node.alpha = 0.75,
        label.size = 2.5, 
-       legend.position = 'top')
+       edge.size = E(chapter_prophet_top_multi_net)$weight/10,
+       legend.position = 'top') + 
+  labs(title = 'Book-to-Topic Network',
+       subtitle = 'Edges sized by weight, which is determined by the number of times a topic appears in a chapter')
+
+ggsave("network.png", plot = plot, 
+       width = 8, height = 4.5, dpi = 1200, 
+       bg = 'white')
+
+plot
 ```
 
 ## Calculate Network Statistics
@@ -526,7 +541,7 @@ deg_cent
 
 ```{r calc-eigen-cent}
 eig_centrality <- igraph::eigen_centrality(chapter_prophet_top_multi_net, 
-                                              scale = T)
+                                           scale = T)
 
 eig_cent <- eig_centrality$vector |> 
   as_tibble() |> 
@@ -559,7 +574,8 @@ all_cent
 ```
 
 ```{r calc-correlation}
-cor(all_cent$deg_centrality, all_cent$eig_centrality)
+cent_correlation <- cor(all_cent$deg_centrality, all_cent$eig_centrality)
+cent_correlation
 ```
 
 ```{r make-long}
@@ -579,15 +595,14 @@ all_cent_long
 ```{r distributions}
 plot <- all_cent_long |> 
   ggplot(aes(x = centrality_score)) + 
-  geom_histogram(aes(fill = centrality_type), 
-                 bins = 6) + 
+  geom_histogram(aes(fill = centrality_type), bins = 5) + 
   scale_fill_manual(values = c('orange2', 'skyblue3')) +
   facet_grid(~centrality_type, 
              scales = 'free') + 
   theme_minimal() +
   theme(legend.position = 'none') +
   labs(title = "Distributions of Centrality Measures",
-       subtitle = 'r ~ 0.934',
+       subtitle = paste0("r ~ ", round(cent_correlation, digits = 3)),
        x = "Centrality Score")
 
 ggsave("central_dists.png", plot = plot, 
@@ -609,7 +624,7 @@ plot <- all_cent_long |>
               ncol = 1, 
               scales = 'free') + 
   labs(title = 'Centrality Scores for the Traditional Categorization of this Section', 
-       subtitle = 'Traditional Classification Not Robust to Centrality Type', 
+       subtitle = 'Traditional Classification Appears Robust to Centrality Type', 
        y = 'Centrality Score', 
        x = 'Prophet Section', 
        fill = 'Prophet Section') +
@@ -626,22 +641,52 @@ plot
 ```{r book-centrality}
 plot <- all_cent_long |> 
   filter(node_type != 'Topic Number') |> 
-  ggplot(aes(x = forcats::fct_reorder2(node, centrality_type, -centrality_score), 
+  ggplot(aes(x = forcats::fct_reorder(node, centrality_score), 
              y = centrality_score)) + 
-  geom_col(aes(fill = node_type)) + 
+  geom_col(aes(fill = node_type)) +
   scale_fill_manual(values = c('darkgreen', 'lightgreen')) +
   theme_minimal() + 
   coord_flip() +
-  facet_grid(~centrality_type, 
-             scales = 'free') +
+  facet_grid(~centrality_type,
+             scales = 'free_x') +
   labs(title = 'Centrality Scores by Prophetic Book',
-       subtitle = 'Scores show small evidence of need for a new classification beyond\nthe Major/Minor Division, particularly with Eigenvector Centrality',
+       subtitle = 'Scores show small evidence of need for a new classification beyond\nthe Major/Minor Division',
        x = 'Prophet Section', 
        y = 'Centrality Scores', 
        fill = 'Prophet Section') +
   theme(legend.position = 'bottom')
 
 ggsave("cent_scores_by_book.png", plot = plot, 
+       width = 8, height = 4.5, dpi = 1200, 
+       bg = 'white')
+
+plot
+```
+
+```{r book-cent-scatter}
+library('ggrepel')
+plot <- all_cent |> 
+  filter(node_type != 'Topic Number') |> 
+  ggplot(aes(y = deg_centrality, 
+             x = eig_centrality)) + 
+  geom_text_repel(aes(color = node_type,
+                      label = node),
+                  max.overlaps = 20) + 
+  scale_color_manual(values = c('darkgreen', 'lightgreen')) +
+  theme_minimal() +
+  labs(title = 'Centrality Scores by Prophetic Book',
+       subtitle = 'Scores show small evidence of need for a new classification beyond\nthe Major/Minor Division',
+       y = 'Degree Centrality', 
+       x = 'Eigenvector Centrality', 
+       color = 'Prophet Section') +
+  theme(legend.position = 'bottom') +
+  ggplot2::annotate("text", x = 0, y = 17, 
+           label = "NOTE: some text adjusted so as not to overlap.\nArrows point to true positions of\nsome overlapping Minor Prophets", 
+           size = 2.5, 
+           hjust = 0, 
+           fontface = 'italic')
+
+ggsave("cent_scores_by_book_scatter.png", plot = plot, 
        width = 8, height = 4.5, dpi = 1200, 
        bg = 'white')
 
@@ -668,6 +713,39 @@ plot <- all_cent_long |>
        y = 'Centrality Score')
 
 ggsave("cent_score_by_topic.png", plot = plot, 
+       width = 8, height = 4.5, dpi = 1200, 
+       bg = 'white')
+
+plot
+```
+
+```{r topic-centrality-scatter}
+plot <- all_cent_long |> 
+  filter(node_type == 'Topic Number') |> 
+  arrange(desc(centrality_score)) |> 
+  slice_head(n = 10, by = centrality_type) |> 
+  group_by(node) |> 
+  mutate(top_ten_count = n(), 
+         top_ten_count = as.factor(top_ten_count), 
+         top_ten_count = if_else(top_ten_count == 1, 
+                                 "No", 
+                                 "Yes")) |> 
+  ungroup() |> 
+  ggplot(aes(x = fct_reorder2(node, top_ten_count, centrality_score), 
+             y = centrality_score, 
+             fill = top_ten_count)) + 
+  geom_col(position = 'dodge') +
+  facet_wrap(~ centrality_type, scales = 'free_y') +
+  scale_fill_manual(values = c("red4", rgb(red = 1, green = 0.5, blue = 0.5))) +
+  theme_minimal() +
+  labs(title = 'Centrality Scores by LDA Topic',
+       subtitle = "Beyond topics 43 and 16, there's not much agreement on the level of topic centality.\nHowever, 6 of the top 10 topics are shared between the measures",
+       x = 'Topic', 
+       y = 'Centrality Score', 
+       fill = 'Is the topic a top 10 topic in both measures?') + 
+  theme(legend.position = "bottom")
+  
+ggsave("cent_scores_by_topic.png", plot = plot, 
        width = 8, height = 4.5, dpi = 1200, 
        bg = 'white')
 
@@ -742,7 +820,7 @@ plot <- cluster_tib |>
   theme_minimal() + 
   theme(legend.position = 'bottom') + 
   labs(title = "Number of Nodes in Each Cluster, Disaggregated by Node Type", 
-       subtitle = 'modularity ~ 0.39',
+       subtitle = 'modularity ~ 0.32',
        x = "Cluster", 
        y = 'Number of Nodes', 
        fill = 'Node Type')
@@ -753,8 +831,6 @@ ggsave("clusters_by_node_type.png", plot = plot,
 
 plot
 ```
-
-I think the story being told here IS one of a new classification method. There seems to be a section of these books that includes a "major" prophet book, Lamentations, but that a lot of minor prophets are sharing the topics among themselves (cluster 4, where topics 16 and 43 seem to be pulling in a lot of minor prophet attention) while some of the other major prophets act almost like gravitational centers in the network, pulling in minor prophets near them (might be cool to get a lineology of these to see if the ones they pull into their clusters were near them). The one except to this appears to be Jeremiah pulling in Daniel, so two major prophets who share a cluster (probably because Daniel covers so many unique topics).
 
 ```{r does-cent-predict-clust}
 mod <- lm(cluster ~ node_type + degree_centrality + eig_centrality, 
@@ -785,24 +861,22 @@ plot <- ggnet2(chapter_prophet_top_multi_net,
                             'Topic'), 
        node.color = V(chapter_prophet_top_multi_net)$cluster, 
        palette = c("1" = '#377eb8', 
-                   "2" = 'orange2', 
-                   "3" = 'skyblue',
-                   "4" = '#e41a1c',
-                   "5" = 'yellow3',
-                   "6" = '#984ea3',
-                   "7" = '#a65628',
-                   "8" = '#4daf4a'), 
+                   "2" = '#e41a1c', 
+                   "3" = '#4daf4a',
+                   "4" = 'orange2',
+                   "5" = '#984ea3'), 
        node.label = V(chapter_prophet_top_multi_net)$name, 
-       label.size = 4, 
+       label.size = 3, 
        node.alpha = 0.75,
-       node.size = (V(chapter_prophet_top_multi_net)$eig_centrality)^3,
-       legend.position = 'none', 
-       edge.color = 'lightgray') +
-  labs(title = 'Topic-by-Book Network',
-       subtitle = 'Nodes sized by their eigenvector centrality, colored by their cluster, and\nshaped based on their section')
+       #node.size = (V(chapter_prophet_top_multi_net)$eig_centrality),
+       legend.position = 'bottom', 
+       edge.color = 'gray85', 
+       edge.size = E(chapter_prophet_top_multi_net)$weight/10) +
+  labs(title = 'Book-to-Topic Network',
+       subtitle = 'Nodes colored by their cluster and shaped based on their section')
 
 ggsave("final_network.png", plot = plot, 
-       width = 8, height = 4.5, dpi = 1200, 
+       width = 8, height = 6, dpi = 1200, 
        bg = 'white')
 
 plot
