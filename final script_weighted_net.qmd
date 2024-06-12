@@ -501,7 +501,7 @@ plot <- ggnet2(chapter_prophet_top_multi_net,
        edge.size = E(chapter_prophet_top_multi_net)$weight/10,
        legend.position = 'none') + 
   labs(title = 'Book-to-Topic Network',
-       subtitle = 'Edges sized by weight, which is determined by the number of times a topic appears in a chapter.\nNodes colored and shaped by mode and section.')
+       subtitle = 'Edges sized by weight, which is determined by the number of times a topic appears in a book.\nNodes colored and shaped by mode and section.')
 
 ggsave("network.png", plot = plot, 
        width = 8, height = 6, dpi = 1200, 
@@ -874,7 +874,16 @@ plot
 mod <- lm(cluster ~ node_type + degree_centrality + eig_centrality, 
            data = full_join(all_cent, cluster_tib))
 summary(mod)
-tab_model(mod)
+tab_model(mod, 
+          show.se = T)
+```
+
+```{r topics-by-cluster}
+cluster_tib |> 
+  filter(node_type == 'Topic Number') |> 
+  select(-node_level, -node_type) |> 
+  mutate(cluster = as.character(cluster), 
+         cluster = paste0("cluster_", cluster)) 
 ```
 
 # Final Network Viz
@@ -915,6 +924,220 @@ plot <- ggnet2(chapter_prophet_top_multi_net,
 
 ggsave("final_network.png", plot = plot, 
        width = 8, height = 6, dpi = 1200, 
+       bg = 'white')
+
+plot
+```
+
+## For Appendix
+
+```{r centrality-per-topic}
+plot <- all_cent_long |> 
+  filter(node_type == 'Topic Number') |> 
+  ggplot(aes(x = fct_reorder(node, centrality_score), 
+             y = centrality_score)) + 
+  geom_col(aes(fill = centrality_type)) +
+  scale_fill_manual(values = c('orange2', 'skyblue3')) +
+  facet_grid(~centrality_type, 
+             scales = 'free') +
+  coord_flip() +
+  theme_minimal() + 
+  theme(legend.position = 'none') + 
+  labs(title = "Centrality for All Topics by Measure", 
+       subtilte = "Ordered by degree centrality",
+       x = 'Topic Number', 
+       y = 'Centrality Score')
+
+ggsave("cent_all_topic.png", plot = plot, 
+       width = 8, heigh = 6, dpi = 1200, 
+       bg = 'white')
+
+plot
+```
+
+```{r create-chapter-network}
+chapter_prophet_top_multi_edgelist_c <- chapters_topics_multi_prophets |> 
+  mutate(ldaTopic = as.character(ldaTopic)) |> 
+  select(book_name, chapter, book.ch.a, ldaTopic) |> 
+  mutate(chapter = as.character(chapter))
+
+row_nodes_c <- unique(chapter_prophet_top_multi_edgelist_c$book.ch.a)
+col_nodes_c <- unique(chapter_prophet_top_multi_edgelist_c$ldaTopic)
+
+# Initialize the biadjacency matrix with zeros
+biadj_matrix <- matrix(0, nrow = length(row_nodes_c), ncol = length(col_nodes_c),
+                       dimnames = list(row_nodes_c, col_nodes_c))
+
+# Populate the biadjacency matrix
+for (i in 1:nrow(chapter_prophet_top_multi_edgelist)) {
+  rowc <- chapter_prophet_top_multi_edgelist_c$book.ch.a[i]
+  colc <- chapter_prophet_top_multi_edgelist_c$ldaTopic[i]
+  biadj_matrix[rowc, colc] <- biadj_matrix[rowc, colc] + 1
+}
+
+chapter_prophet_top_multi_net_c <- 
+  graph_from_biadjacency_matrix(incidence = biadj_matrix, 
+                                mode = 'all')
+
+chapter_prophet_top_multi_net_c
+```
+
+```{r check-type}
+type <- vertex_attr(chapter_prophet_top_multi_net_c, "type")
+# these are the two modes (word/chapter)
+
+table(type)
+```
+
+```{r add-attributes}
+# Chapter Colors
+V(chapter_prophet_top_multi_net_c)$color[type == FALSE] <- rgb(red = 1, green = 0, blue = 1, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Isa', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = 1, green = 0, blue = .2, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Jer', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = .8, green = 0, blue = .4, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Lam', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = .6, green = 0, blue = .6, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Eze', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = .4, green = 0, blue = .8, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Dan', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = .2, green = 0, blue = 1, alpha = 0.3)
+
+#minor prophets
+V(chapter_prophet_top_multi_net_c)[grepl('Hos', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = 0, green = 0.5, blue = 1, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Joe', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = 0, green = 0.6, blue = 1, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Amo', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = 0, green = 0.7, blue = 1, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Oba', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = 0, green = 0.8, blue = 1, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Jon', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = 0, green = 0.9, blue = 1, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Mic', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = 0, green = 1, blue = 1, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Nah', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = 0, green = 1, blue = 0.9, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Hab', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = 0, green = 1, blue = 0.8, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Zep', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = 0, green = 1, blue = 0.7, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Hag', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = 0, green = 1, blue = 0.6, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Zec', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = 0, green = 1, blue = 0.5, alpha = 0.3)
+
+V(chapter_prophet_top_multi_net_c)[grepl('Mal', V(chapter_prophet_top_multi_net_c)$name)]$color <- 
+  rgb(red = 0, green = 1, blue = 0.4, alpha = 0.3)
+
+# topic color
+V(chapter_prophet_top_multi_net_c)$color[type == TRUE] <- 
+  rgb(red = 1, green = 1, blue = 0, alpha = 0.8)
+
+#label size
+V(chapter_prophet_top_multi_net_c)$label.cex <- .5
+```
+
+```{r chapter-network-viz}
+# set.seed(106)
+# plot_c <- plot(chapter_prophet_top_multi_net_c, layout = layout_with_fr, vertex.size = 5, vertex.frame.color = NA) 
+
+set.seed(106)
+plot_c <- ggnet2(chapter_prophet_top_multi_net_c, 
+       node.color = V(chapter_prophet_top_multi_net_c)$color, 
+       node.size = 8,
+       node.alpha = 0.5,
+       node.label = V(chapter_prophet_top_multi_net_c)$name,
+       label.size = 2) + 
+  labs(title = 'Chapter-to-Topic Network', 
+       subtitle = 'Nodes colored by Book (all topics yellow)')
+
+ggsave("chapter_multitopic_viz.png", plot = plot_c, 
+       width = 12, height = 10, dpi = 1200, 
+       bg = 'white')
+
+plot_c
+```
+
+```{r chapter-clusts}
+clusters_chap <- cluster_fast_greedy(chapter_prophet_top_multi_net_c)
+
+clusters_chap
+```
+
+```{r save-clusters}
+cluster_tib_chap <- tibble(cluster = as.numeric(membership(clusters_chap)),
+                           node = V(chapter_prophet_top_multi_net_c)$name) |> 
+  mutate(node_level = c(rep(0, 250), rep(1, 43))) |>
+  mutate(node_type = case_when(node_level == 1 ~ "Topic Number",
+                             node_level == 0 ~ "Minor Prophet")) |> 
+  mutate(node_type = if_else(node == 'Isaiah' |
+                               node == 'Jeremiah' |
+                               node == 'Lamentations' |
+                               node == 'Ezekiel' |
+                               node == 'Daniel', 
+                             "Major Prophet", 
+                             node_type)) |> 
+  arrange(cluster)
+
+cluster_tib_chap
+```
+
+```{r attach-stats-to-network}
+V(chapter_prophet_top_multi_net_c)$cluster <- as.character(membership(clusters_chap))
+
+chapter_prophet_top_multi_net_c
+```
+
+```{r cluster_plot}
+library(pals)
+# pals::cols25(n = 18)
+set.seed(106)
+plot <- ggnet2(chapter_prophet_top_multi_net_c,
+       node.color = V(chapter_prophet_top_multi_net_c)$cluster, 
+       palette = c("1" = '#1F78C8',
+                   "2" = '#ff0000',
+                   "3" = '#33a02c',
+                   "4" = '#6A33C2',
+                   "5" = '#ff7f00',
+                   "6" = '#565656',
+                   "7" = '#FFD700',
+                   "8" = '#a6cee3',
+                   "9" = '#FB6496',
+                   "10" = '#b2df8a',
+                   "11" = '#CAB2D6',
+                   "12" = '#FDBF6F',
+                   "13" = '#999999',
+                   "14" = '#EEE685',
+                   "15" = '#C8308C',
+                   "16" = '#FF83FA',
+                   "17" = '#C814FA',
+                   "18" = '#0000FF'),
+       node.label = V(chapter_prophet_top_multi_net_c)$name, 
+       node.size = 8,
+       node.alpha = 0.75,
+       label.size = 2,
+       legend.position = 'bottom') +
+  labs(title = 'Chapter-to-Topic Network',
+       subtitle = 'Nodes colored by their cluster. Modularity ~ 0.61')
+
+ggsave("chapter_multitopic_viz_clusts.png", plot = plot, 
+       width = 12, height = 10, dpi = 1200, 
        bg = 'white')
 
 plot
